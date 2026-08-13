@@ -114,3 +114,7 @@ class QueryResponse(BaseModel):
     chunk: str
     score: float
     document_name: str
+    similarity: Optional[float] = None
+    chunk_id: Optional[str] = None
+    document_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None

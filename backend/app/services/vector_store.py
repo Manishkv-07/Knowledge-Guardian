@@ -81,15 +81,8 @@ class VectorStore:
             raise FileNotFoundError(f"Chunk file not found for document {document_id}")
 
         # 1. Load chunks
-        try:
-            with open(chunks_file, "r", encoding="utf-8") as f:
-                chunks = json_data = pickle.load(f)  # Wait, using pickle.load on json is wrong! Let's use json.load
-        except Exception:
-            # Let's write the correct code directly:
-            pass
-
         with open(chunks_file, "r", encoding="utf-8") as f:
-            chunks = json.loads(f.read())
+            chunks = json.load(f)
 
         if not chunks:
             raise ValueError(f"No chunks found in {chunks_file}")
@@ -105,7 +98,7 @@ class VectorStore:
         for i, chunk in enumerate(chunks):
             self.metadata.append({
                 "chunk_id": chunk["id"],
-                "document_id": chunk["document_id"],
+                "document_id": str(chunk["document_id"]),
                 "text": chunk["text"],
                 "filename": chunk["metadata"]["filename"],
                 "chunk_index": chunk["metadata"]["chunk_index"],
@@ -129,15 +122,18 @@ class VectorStore:
         3. Return chunks with similarity scores
         Returns: List of {chunk_id, document_id, text, metadata, score, similarity}
         """
+        if not query or not query.strip():
+            return []
+
         if self.index is None or self.index.ntotal == 0:
             logger.warning("Search triggered but vector index is empty.")
             return []
 
         # 1. Embed query
-        query_vector = embedding_service.embed_query(query)
+        query_vector = embedding_service.embed_query(query.strip())
 
         # 2. Search FAISS index (clamp k to size of index)
-        k_search = min(k, self.index.ntotal)
+        k_search = min(max(1, k), self.index.ntotal)
         distances, indices = self.index.search(query_vector, k_search)
 
         results = []
@@ -147,7 +143,7 @@ class VectorStore:
                 match = self.metadata[idx]
                 score = float(dist)
                 # Convert L2 distance (Euclidean distance) to similarity score between 0 and 1
-                similarity = 1.0 / (1.0 + score)
+                similarity = float(1.0 / (1.0 + score))
                 
                 results.append({
                     "chunk_id": match["chunk_id"],
@@ -165,12 +161,32 @@ class VectorStore:
                 
         return results
 
+    def remove_document(self, document_id: str) -> dict:
+        """Remove all chunks associated with a document ID from the vector index and metadata."""
+        doc_id_str = str(document_id)
+        original_count = len(self.metadata)
+        remaining_metadata = [m for m in self.metadata if str(m.get("document_id")) != doc_id_str]
+        removed_count = original_count - len(remaining_metadata)
+
+        if removed_count == 0:
+            logger.info(f"No chunks found in vector store for document ID {document_id}")
+            return {"status": "noop", "chunks_removed": 0}
+
+        self.metadata = remaining_metadata
+        self.index = faiss.IndexFlatL2(self.dimension)
+
+        if len(self.metadata) > 0:
+            texts = [m["text"] for m in self.metadata]
+            embeddings = embedding_service.embed_texts(texts)
+            self.index.add(embeddings)
+
+        self._save()
+        logger.info(f"Removed {removed_count} chunks from vector store for document ID {document_id}")
+        return {"status": "success", "chunks_removed": removed_count}
+
     def get_all_documents(self) -> List[str]:
         """Get list of all document IDs in the store"""
-        unique_doc_ids = set(item["document_id"] for item in self.metadata)
+        unique_doc_ids = set(str(item["document_id"]) for item in self.metadata)
         return list(unique_doc_ids)
-
-# Import json for internal operations
-import json
 
 vector_store = VectorStore()

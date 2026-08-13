@@ -9,6 +9,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('library'); // 'library' | 'chat' | 'insights' | 'stats'
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [selectedContextChunk, setSelectedContextChunk] = useState(null);
+  const [copyFeedback, setCopyFeedback] = useState('');
   const [topK, setTopK] = useState(3);
   const [insightType, setInsightType] = useState('summary');
   const [isUploading, setIsUploading] = useState(false);
@@ -56,12 +58,14 @@ export default function App() {
     }
   };
 
-  // Dropzone callback handling file drop
+  // Dropzone callback handling file drop (supports PDF, TXT, MD)
   const onDrop = React.useCallback(async (acceptedFiles) => {
     const file = acceptedFiles[0];
     if (!file) return;
-    if (file.type !== 'application/pdf') {
-      showError("Only PDF files are supported!");
+    
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['pdf', 'txt', 'md'].includes(ext)) {
+      showError("Only PDF, TXT, and MD files are supported!");
       return;
     }
 
@@ -81,7 +85,9 @@ export default function App() {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'application/pdf': ['.pdf']
+      'application/pdf': ['.pdf'],
+      'text/plain': ['.txt'],
+      'text/markdown': ['.md'],
     },
     multiple: false,
     disabled: isUploading
@@ -99,22 +105,24 @@ export default function App() {
     }
   };
 
-  const handleSearchSubmit = async (e) => {
+  const handleSearchSubmit = async (e, overrideQuery = null) => {
     if (e) e.preventDefault();
-    if (!searchQuery.trim()) return;
+    const queryToSearch = (overrideQuery !== null ? overrideQuery : searchQuery).trim();
+    if (!queryToSearch) return;
+
+    setActiveTab('chat');
 
     // Add to chat history
-    const userMessage = { role: 'user', content: searchQuery };
+    const userMessage = { role: 'user', content: queryToSearch };
     setChatHistory(prev => [...prev, userMessage]);
     
     setIsSearching(true);
     setErrorMessage('');
     
-    const queryText = searchQuery;
     setSearchQuery(''); // clear field
 
     try {
-      const results = await api.queryKnowledgeBase(queryText, topK);
+      const results = await api.queryKnowledgeBase(queryToSearch, topK);
       setSearchResults(results);
 
       // Create structured assistant response
@@ -123,7 +131,11 @@ export default function App() {
         replyContent = "I searched through your knowledge base, but I couldn't find any relevant passages. Make sure your documents are fully uploaded and indexed.";
       } else {
         replyContent = `Based on your library, here is what I found:\n\n` + 
-          results.map((res, i) => `• **From ${res.document_name}**:\n  > ${res.chunk.trim()}`).join("\n\n");
+          results.map((res, i) => {
+            const sim = res.similarity !== undefined ? res.similarity : (1.0 / (1.0 + res.score));
+            const simPct = Math.round(sim * 100);
+            return `• **From ${res.document_name}** *(${simPct}% relevance)*:\n  > ${res.chunk.trim()}`;
+          }).join("\n\n");
       }
 
       setChatHistory(prev => [...prev, {
@@ -141,6 +153,14 @@ export default function App() {
       }]);
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const handleCopyChunk = (text) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopyFeedback('Copied to clipboard!');
+      setTimeout(() => setCopyFeedback(''), 2500);
     }
   };
 
@@ -498,26 +518,62 @@ export default function App() {
 
             {/* Context Sidebar */}
             <div className="w-80 bg-white border border-accent-secondary/50 rounded-2xl p-5 shadow-[0_4px_12px_rgba(0,0,0,0.02)] flex flex-col shrink-0">
-              <h3 className="font-serif text-sm font-bold text-text-primary border-b border-bg-warm pb-3">Retrieved Citations</h3>
+              <div className="flex items-center justify-between border-b border-bg-warm pb-3">
+                <h3 className="font-serif text-sm font-bold text-text-primary">Retrieved Citations</h3>
+                <span className="text-[10px] font-mono text-text-muted bg-bg-warm px-2 py-0.5 rounded-full border border-accent-secondary/40">
+                  {searchResults.length} {searchResults.length === 1 ? 'match' : 'matches'}
+                </span>
+              </div>
+
               <div className="flex-1 overflow-y-auto mt-4 space-y-3.5 pr-0.5">
                 {searchResults.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-center p-4">
-                    <p className="text-xs text-text-muted">Semantic chunks matching your last query will display here.</p>
+                  <div className="h-full flex flex-col items-center justify-center text-center p-4 text-text-muted space-y-2">
+                    <span className="text-2xl opacity-60">📑</span>
+                    <p className="text-xs">Semantic chunks matching your last query will display here.</p>
                   </div>
                 ) : (
-                  searchResults.map((res, i) => (
-                    <div key={i} className="bg-bg-warm/50 border border-accent-secondary/30 rounded-lg p-3 space-y-2 text-xs">
-                      <div className="flex items-center justify-between text-[10px] text-text-secondary">
-                        <span className="font-semibold text-accent-tertiary truncate max-w-[150px]">{res.document_name}</span>
-                        <span className="bg-white px-1.5 py-0.5 rounded border border-accent-secondary/40 font-mono">
-                          Dist: {res.score.toFixed(3)}
-                        </span>
+                  searchResults.map((res, i) => {
+                    const sim = res.similarity !== undefined ? res.similarity : (1.0 / (1.0 + res.score));
+                    const simPct = Math.round(sim * 100);
+                    const chunkIdx = (res.metadata?.chunk_index ?? 0) + 1;
+                    const totalChunks = res.metadata?.total_chunks ?? 1;
+
+                    return (
+                      <div
+                        key={i}
+                        onClick={() => setSelectedContextChunk(res)}
+                        className="bg-white hover:bg-sidebar-warm/40 border border-accent-secondary/50 hover:border-accent-primary/80 rounded-xl p-3.5 space-y-2.5 text-xs shadow-2xs hover:shadow-md transition-all duration-200 cursor-pointer group"
+                        title="Click on result to show more context and details"
+                      >
+                        <div className="flex items-center justify-between gap-1 text-[11px]">
+                          <span className="font-semibold text-accent-tertiary truncate max-w-[130px] flex items-center gap-1" title={res.document_name}>
+                            <span>📄</span> {res.document_name}
+                          </span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold border ${
+                              simPct >= 60 ? 'bg-status-success/15 text-status-success border-status-success/30' : 'bg-accent-primary/15 text-accent-tertiary border-accent-primary/30'
+                            }`}>
+                              {simPct}% Match
+                            </span>
+                            <span className="bg-bg-warm px-1 py-0.5 rounded text-[9px] text-text-muted font-mono border border-accent-secondary/30">
+                              d:{res.score.toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="text-text-primary leading-relaxed font-serif italic text-[11px] bg-bg-warm/60 group-hover:bg-white p-2.5 rounded-lg border border-accent-secondary/30 line-clamp-3 transition-colors">
+                          "{res.chunk.trim()}"
+                        </p>
+
+                        <div className="flex items-center justify-between text-[10px] text-text-muted pt-1 border-t border-accent-secondary/30">
+                          <span>Chunk {chunkIdx}/{totalChunks}</span>
+                          <span className="text-accent-primary font-medium group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+                            Inspect context →
+                          </span>
+                        </div>
                       </div>
-                      <p className="text-text-primary leading-relaxed font-serif italic text-[11px] bg-white p-2.5 rounded border border-accent-secondary/20">
-                        "{res.chunk.trim()}"
-                      </p>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -723,11 +779,11 @@ export default function App() {
 
       {/* 📁 Upload Modal (uses React-Dropzone drag and drop area) */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-text-primary/20 backdrop-blur-xs flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-text-primary/30 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-accent-secondary rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
             
             <div className="flex items-center justify-between border-b border-bg-warm pb-3">
-              <h3 className="font-serif font-bold text-base text-text-primary">Ingest PDF Document</h3>
+              <h3 className="font-serif font-bold text-base text-text-primary">Ingest Document (PDF, TXT, MD)</h3>
               <button 
                 onClick={() => setShowUploadModal(false)} 
                 className="text-text-muted hover:text-text-primary text-xl font-medium"
@@ -759,10 +815,10 @@ export default function App() {
                     <svg className="h-8 w-8 text-accent-primary opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-3-3v6m-9 1V4a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
                     </svg>
-                    <span className="text-xs font-semibold text-text-primary">
-                      {isDragActive ? "Drop the PDF here..." : "Drag & drop or click to select PDF"}
+                    <span className="text-xs font-semibold text-text-primary text-center">
+                      {isDragActive ? "Drop the document here..." : "Drag & drop or click to select file"}
                     </span>
-                    <span className="text-[10px] text-text-muted">Supports research PDF articles up to 15MB</span>
+                    <span className="text-[10px] text-text-muted">Supports research PDFs, text notes & markdown files up to 15MB</span>
                   </>
                 )}
               </div>
@@ -775,6 +831,124 @@ export default function App() {
               >
                 Cancel
               </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 🔍 Citation & Context Inspector Modal */}
+      {selectedContextChunk && (
+        <div className="fixed inset-0 bg-text-primary/30 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-accent-secondary rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-accent-secondary/40 bg-sidebar-warm/40">
+              <div className="flex items-center gap-2.5">
+                <div className="h-8 w-8 rounded-lg bg-accent-primary/20 flex items-center justify-center text-accent-tertiary">
+                  🔍
+                </div>
+                <div>
+                  <h3 className="font-serif font-bold text-base text-text-primary">Citation Context Inspector</h3>
+                  <p className="text-[11px] text-text-secondary">Full passage recall from vector knowledge base</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedContextChunk(null)}
+                className="h-8 w-8 rounded-full hover:bg-accent-secondary/40 text-text-muted hover:text-text-primary flex items-center justify-center text-lg transition-colors cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1">
+              
+              {/* Metadata Pills Row */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div className="bg-bg-warm/70 border border-accent-secondary/40 rounded-lg p-2.5">
+                  <span className="text-[10px] text-text-muted uppercase font-bold tracking-wider block">Source Document</span>
+                  <span className="font-semibold text-text-primary truncate block mt-0.5" title={selectedContextChunk.document_name}>
+                    {selectedContextChunk.document_name}
+                  </span>
+                </div>
+
+                <div className="bg-bg-warm/70 border border-accent-secondary/40 rounded-lg p-2.5">
+                  <span className="text-[10px] text-text-muted uppercase font-bold tracking-wider block">Similarity Match</span>
+                  <span className="font-mono font-bold text-status-success block mt-0.5">
+                    {Math.round((selectedContextChunk.similarity !== undefined ? selectedContextChunk.similarity : (1.0 / (1.0 + selectedContextChunk.score))) * 100)}% Match
+                  </span>
+                </div>
+
+                <div className="bg-bg-warm/70 border border-accent-secondary/40 rounded-lg p-2.5">
+                  <span className="text-[10px] text-text-muted uppercase font-bold tracking-wider block">L2 Distance</span>
+                  <span className="font-mono font-semibold text-text-primary block mt-0.5">
+                    {selectedContextChunk.score.toFixed(4)}
+                  </span>
+                </div>
+
+                <div className="bg-bg-warm/70 border border-accent-secondary/40 rounded-lg p-2.5">
+                  <span className="text-[10px] text-text-muted uppercase font-bold tracking-wider block">Chunk Position</span>
+                  <span className="font-mono font-semibold text-text-primary block mt-0.5">
+                    Chunk {(selectedContextChunk.metadata?.chunk_index ?? 0) + 1} of {selectedContextChunk.metadata?.total_chunks ?? 1}
+                  </span>
+                </div>
+              </div>
+
+              {/* Full Passage Text Container */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Extracted Passage Context</label>
+                  {copyFeedback && (
+                    <span className="text-[11px] font-medium text-status-success">
+                      ✓ {copyFeedback}
+                    </span>
+                  )}
+                </div>
+                
+                <div className="bg-bg-warm/50 border border-accent-secondary/60 rounded-xl p-5 text-sm font-serif leading-relaxed text-text-primary select-text shadow-inner max-h-60 overflow-y-auto">
+                  <p className="whitespace-pre-wrap leading-relaxed">{selectedContextChunk.chunk.trim()}</p>
+                </div>
+              </div>
+
+              {selectedContextChunk.metadata?.timestamp && (
+                <div className="text-[10px] text-text-muted flex items-center justify-between border-t border-bg-warm pt-2">
+                  <span>Indexed: {new Date(selectedContextChunk.metadata.timestamp).toLocaleString()}</span>
+                  <span>Length: {selectedContextChunk.chunk.length} characters</span>
+                </div>
+              )}
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3.5 border-t border-accent-secondary/40 bg-sidebar-warm/30 flex items-center justify-between gap-3">
+              <button
+                onClick={() => handleCopyChunk(selectedContextChunk.chunk)}
+                className="px-3.5 py-2 bg-white hover:bg-bg-warm border border-accent-secondary rounded-lg text-xs font-semibold text-text-primary transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <span>📋</span> Copy Passage
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const snippet = selectedContextChunk.chunk.slice(0, 60);
+                    const followUp = `Regarding "${selectedContextChunk.document_name}": explain "${snippet.trim()}..."`;
+                    setSelectedContextChunk(null);
+                    handleSearchSubmit(null, followUp);
+                  }}
+                  className="px-4 py-2 bg-accent-primary hover:bg-accent-tertiary text-white rounded-lg text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>💬</span> Ask Follow-up
+                </button>
+                
+                <button
+                  onClick={() => setSelectedContextChunk(null)}
+                  className="px-4 py-2 bg-bg-warm hover:bg-accent-secondary/40 border border-accent-secondary rounded-lg text-xs font-semibold text-text-secondary transition-all cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
           </div>

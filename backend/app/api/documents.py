@@ -151,6 +151,13 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
     # 2. Delete database records (cascades memories)
     db.delete(db_doc)
     db.commit()
+
+    # 3. Remove document chunks from vector store index
+    try:
+        vector_store.remove_document(str(doc_id))
+    except Exception as e:
+        logger.error(f"Failed to remove document {doc_id} from vector store: {e}")
+
     return {"detail": "Document, chunks, and associated memories deleted successfully."}
 
 @router.post("/query", response_model=List[QueryResponse])
@@ -164,7 +171,11 @@ def query_knowledge_base(request: QueryRequest):
         query_responses.append({
             "chunk": r["text"],
             "score": r["score"],
-            "document_name": r["metadata"]["filename"]
+            "similarity": r.get("similarity", 1.0 / (1.0 + r["score"])),
+            "document_name": r["metadata"]["filename"],
+            "chunk_id": r.get("chunk_id", ""),
+            "document_id": str(r.get("document_id", "")),
+            "metadata": r.get("metadata", {})
         })
         
     return query_responses

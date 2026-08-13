@@ -8,7 +8,10 @@ class EmbeddingService:
         logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL_NAME}...")
         self.model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
         # Store embedding dimension (for all-MiniLM-L6-v2, this is 384)
-        self.dimension = self.model.get_sentence_embedding_dimension()
+        if hasattr(self.model, "get_embedding_dimension"):
+            self.dimension = self.model.get_embedding_dimension()
+        else:
+            self.dimension = self.model.get_sentence_embedding_dimension()
         logger.info(f"Embedding model loaded. Dimension size: {self.dimension}")
     
     def embed_texts(self, texts: list) -> np.ndarray:
