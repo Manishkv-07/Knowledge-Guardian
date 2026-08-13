@@ -1,0 +1,19 @@
+Title: Attention is All You Need: A Retrospective Analysis
+Author: Prof. Linda Zhao, Dept of Data Sciences
+Date: January 2026
+
+Abstract:
+Almost a decade after the introduction of the Transformer architecture, we evaluate its structural core: self-attention. We trace how this single mathematical concept revolutionized machine learning, replaced recurrent LSTMs, and laid the groundwork for today's RAG systems.
+
+1. The Paradigm Shift
+The key contribution of Vaswani et al. (2017) was replacing recurrent connections with self-attention. LSTMs processed tokens step-by-step, meaning the gradients had to flow back through time, leading to vanishing or exploding gradients. Self-attention links all tokens in a single operation, reducing the path length for gradient flow to O(1).
+
+2. Self-Attention Mechanics
+Self-attention models the relationships between all pairs of tokens in a sequence. For queries Q, keys K, and values V:
+  Attention(Q, K, V) = softmax( Q * K^T / sqrt(d_k) ) * V
+This calculation allows each token to build a contextual representation based on the entire sequence. In RAG pipelines, this same dot-product approach maps user query vectors against the keys (document embeddings) in a database.
+
+3. References
+[1] Vaswani, A., et al. (2017). "Attention is All You Need." NeurIPS.
+[2] Bahdanau, D., et al. (2014). "Neural Machine Translation by Jointly Learning to Align and Translate." arXiv preprint.
+[3] Sutskever, I., et al. (2014). "Sequence to Sequence Learning with Neural Networks." NeurIPS.

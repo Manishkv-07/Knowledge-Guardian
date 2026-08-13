@@ -1,0 +1,22 @@
+Title: The Evolution of Transformer-based Encoder-Decoder Architectures
+Author: Alex Dupont, DeepLearning Research Lab
+Date: June 2026
+
+Abstract:
+Since the seminal work of Vaswani et al. (2017), the Transformer model has undergone numerous modifications. We trace the structural evolution of encoder-only, decoder-only, and encoder-decoder models, discussing the adoption of Rotary Position Embeddings (RoPE) and layer normalization schemes.
+
+1. Encoder-Only vs. Decoder-Only Models
+The original Transformer architecture comprised an encoder to process the input source and a decoder to generate the target sequence. Over time, architectures branched:
+- Encoder-Only (e.g., BERT): Focuses on bidirectional context representation. Highly effective for classification, embedding extraction, and text chunk tagging.
+- Decoder-Only (e.g., GPT series): Focuses on autoregressive next-token prediction, utilizing causal masking to prevent attention from looking at future tokens. This is the dominant architecture for generative chat models.
+
+2. Positional Encodings and Attention Scales
+Transformers lack inherent awareness of token sequence order due to the permutation invariance of self-attention. Early models used absolute sinusoidal positional encodings. Modern architectures utilize Rotary Position Embeddings (RoPE), which encode relative positions by multiplying key and query vectors with rotation matrices. This enables stable context window scaling.
+
+3. Similarity Search and Embeddings
+Encoder-only models remain the preferred choice for generating dense vector embeddings. Models like `all-MiniLM-L6-v2` extract the hidden states of the encoder and pool them to create fixed-size vectors for semantic similarity search in tools like FAISS.
+
+4. References
+[1] Vaswani, A., et al. (2017). "Attention is All You Need." NeurIPS.
+[2] Su, J., et al. (2021). "RoFormer: Enhanced Transformer with Rotary Position Embedding." arXiv preprint.
+[3] Raffel, C., et al. (2020). "Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer." JMLR.

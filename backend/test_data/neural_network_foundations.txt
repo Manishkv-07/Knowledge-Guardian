@@ -1,0 +1,25 @@
+Title: A Review of Neural Network Architectures and Backpropagation
+Author: Prof. Marcus Chen, Department of Computer Science
+Date: March 2026
+
+Abstract:
+This work traces the development of neural network architectures from simple Multi-Layer Perceptrons (MLPs) to deep Convolutional and Recurrent neural networks. We examine the math of backpropagation and highlight structural commonalities like feed-forward blocks that remain relevant in modern architectures, including Transformers.
+
+1. Multi-Layer Perceptrons (MLPs) and Activation Functions
+Deep learning begins with the Multi-Layer Perceptron (MLP), a feed-forward network consisting of an input layer, one or more hidden layers, and an output layer. Each layer applies a linear transformation followed by a non-linear activation function. Historically, sigmoidal functions were utilized, but modern deep networks employ Rectified Linear Units (ReLU) or Gaussian Error Linear Units (GeLU) to combat vanishing gradients.
+  ReLU(x) = max(0, x)
+  GeLU(x) = x * Phi(x)
+where Phi(x) is the cumulative distribution function of the standard normal distribution.
+
+2. Backpropagation and the Chain Rule
+Training deep neural networks is formulated as minimizing a loss function L with respect to network weights W. This optimization is carried out using gradient descent, where gradients are computed via the backpropagation algorithm. Backpropagation is a direct application of the calculus chain rule, propagating error signals backward from the output layer to the input. For a weight w_ij connecting neuron i to neuron j:
+  d L / d w_ij = (d L / d a_j) * (d a_j / d z_j) * (d z_j / d w_ij)
+This mathematical foundation is identical across all architectures, whether they are Convolutional Neural Networks (CNNs) processing images or self-attention networks processing text sequences.
+
+3. Transformer Integration
+Modern Transformer blocks contain two sub-layers: a multi-head self-attention mechanism and a position-wise fully connected feed-forward network (MLP). Thus, understanding the foundations of standard feed-forward networks is essential to analyzing Transformer scaling laws. The integration of layer normalization and residual connections stabilizes this backpropagation of gradients in networks with hundreds of layers.
+
+4. References
+[1] Rumelhart, D. E., et al. (1986). "Learning representations by back-propagating errors." Nature.
+[2] Goodfellow, I., et al. (2016). "Deep Learning." MIT Press.
+[3] LeCun, Y., et al. (2015). "Deep learning." Nature.

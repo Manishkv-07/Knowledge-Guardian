@@ -1,0 +1,17 @@
+Title: Deep Learning Foundations: Neural Networks and Backpropagation Dynamics
+Author: Prof. Albert Yang, Deep Learning Institute
+Date: November 2025
+
+Abstract:
+We present a mathematical review of gradient flow and backpropagation dynamics in deep neural networks. We examine the effects of weight initialization on training stability and connect these concepts to the optimization of multi-head attention weights in Transformers.
+
+1. Neural Networks as Function Approximators
+Neural networks are parameter-rich mathematical functions designed to approximate target distributions. They consist of layers of nodes, where each layer performs a matrix multiplication and applies a non-linear activation. Training updates these weight matrices to minimize an error function.
+
+2. Backpropagation and Optimization
+Optimization utilizes the gradient of a loss function with respect to each weight. Backpropagation computes these gradients by working backward from the output layer, recursively applying the chain rule of calculus. If the model weights are initialized poorly, gradients can either vanish (become zero) or explode (become infinitely large), stalling training. Modern techniques like layer normalization and residual links solve this, enabling stable training of 100+ layer architectures.
+
+3. References
+[1] He, K., et al. (2015). "Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification." ICCV.
+[2] Glorot, X., & Bengio, Y. (2010). "Understanding the difficulty of training deep feedforward neural networks." AISTATS.
+[3] Kingma, D. P., & Ba, J. (2014). "Adam: A Method for Stochastic Optimization." arXiv preprint.

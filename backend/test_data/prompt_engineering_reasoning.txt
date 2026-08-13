@@ -1,0 +1,23 @@
+Title: Advanced Prompt Engineering for Complex Reasoning
+Author: Elena Rostova, Center for Human-AI Interaction
+Date: July 2026
+
+Abstract:
+Prompt engineering has evolved from basic heuristic templates to programmatic prompt execution frameworks. This paper analyzes techniques such as Chain-of-Thought (CoT) and Tree-of-Thoughts (ToT) prompting, exploring how structured reasoning guidelines improve few-shot and zero-shot performance in language models.
+
+1. The Evolution of Prompts
+In early LLMs, prompts were simple instruction strings. As models scaled, researchers discovered that structuring instructions dramatically improved performance. Prompt engineering is now recognized as a core mechanism for directing the attention of Transformer models during inference.
+
+2. Chain-of-Thought (CoT) Prompting
+Chain-of-Thought prompting encourages the model to generate intermediate reasoning steps before outputting the final answer. By explicitly writing out its reasoning (e.g., "Let's think step by step"), the model leverages its autoregressive generation capabilities to build a logical path to the correct conclusion. CoT is closely related to few-shot prompting, as providing a few examples of step-by-step reasoning guides the model to adopt a similar structured formatting.
+
+3. Retrieval-Context Prompting in RAG
+In RAG systems, prompt engineering is vital to direct how the model interacts with retrieved contexts. For instance, a system prompt might instruct the LLM:
+- "If the context does not contain the answer, state that you do not know."
+- "Cite the document name when referencing facts."
+This prevents hallucinations and maintains factual alignment.
+
+4. References
+[1] Wei, J., et al. (2022). "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models." NeurIPS.
+[2] Yao, S., et al. (2023). "Tree of Thoughts: Deliberate Problem Solving with Large Language Models." arXiv preprint.
+[3] Kojima, T., et al. (2022). "Large Language Models are Zero-Shot Reasoners." NeurIPS.

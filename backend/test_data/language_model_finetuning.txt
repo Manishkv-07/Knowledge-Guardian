@@ -1,0 +1,22 @@
+Title: Parameter-Efficient Techniques in Language Model Fine-Tuning
+Author: Dr. Kenji Sato, Tokyo Advanced Tech
+Date: May 2026
+
+Abstract:
+Fine-tuning large language models on specialized domains often results in catastrophic forgetting and high computational overhead. This paper reviews Parameter-Efficient Fine-Tuning (PEFT) methods, focusing on Low-Rank Adaptation (LoRA) and prefix tuning, and explores their integration into active retrieval systems.
+
+1. The Necessity of Fine-Tuning
+While pre-trained language models possess broad general capabilities, they frequently require specialization to perform task-specific workflows. Traditional full-parameter fine-tuning updates all parameters of the model, which is computationally expensive and requires significant GPU memory. Additionally, it risks catastrophic forgetting, where the model loses its general reasoning capabilities.
+
+2. Low-Rank Adaptation (LoRA)
+Low-Rank Adaptation (LoRA) freezes the pre-trained model weights and injects trainable rank decomposition matrices into each layer of the Transformer architecture. For a pre-trained weight matrix W_0 in R^{d x k}, LoRA represents its update delta W as the product of two low-rank matrices B and A:
+  W = W_0 + delta W = W_0 + B * A
+where B is in R^{d x r}, A is in R^{r x k}, and the rank r << min(d, k). This reduces the number of trained parameters by up to 99% while maintaining comparable task performance.
+
+3. PEFT in RAG Systems
+A common debate in AI architecture is whether to fine-tune a model on private data or use a Retrieval-Augmented Generation (RAG) pipeline. Fine-tuning embeds knowledge directly into the weights of the model, whereas RAG fetches document chunks dynamically using vector similarity engines like FAISS. Combining PEFT fine-tuning (for style and tone adaptation) with RAG systems (for factual knowledge retrieval) represents the state-of-the-art hybrid approach.
+
+4. References
+[1] Hu, E. J., et al. (2021). "LoRA: Low-Rank Adaptation of Large Language Models." arXiv preprint.
+[2] Houlsby, N., et al. (2019). "Parameter-Efficient Transfer Learning for NLP." ICML.
+[3] Lester, B., et al. (2021). "The Power of Scale for Parameter-Efficient Prompt Tuning." EMNLP.

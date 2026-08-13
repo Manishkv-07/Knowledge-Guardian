@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-warm: #F8F6F1;
+  --color-sidebar-warm: #F0EDE6;
+  --color-accent-primary: #D4A373;
+  --color-accent-secondary: #E9D8C6;
+  --color-accent-tertiary: #B08968;
+  
+  --color-text-primary: #2D2A24;
+  --color-text-secondary: #6B6359;
+  --color-text-muted: #A69B8F;
+  
+  --color-status-success: #6B8F71;
+  --color-status-error: #C17A7A;
+  
+  --font-serif: "Merriweather", Georgia, serif;
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-bg-warm);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-serif);
+    color: var(--color-text-primary);
+  }
+}
+
+/* Premium warm minimalist scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-sidebar-warm);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-accent-secondary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent-primary);
+}
+
+/* Markdown styling classes for academic readability */
+.markdown-body p {
+  margin-bottom: 0.75rem;
+  line-height: 1.6;
+}
+
+.markdown-body ul, .markdown-body ol {
+  padding-left: 1.25rem;
+  margin-bottom: 0.75rem;
+  list-style-type: disc;
+}
+
+.markdown-body li {
+  margin-bottom: 0.25rem;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid var(--color-accent-primary);
+  padding-left: 1rem;
+  margin-left: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-style: italic;
+  color: var(--color-text-secondary);
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: var(--color-text-primary);
+}
+
+.markdown-body strong {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+

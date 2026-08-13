@@ -1,0 +1,22 @@
+Title: Scalability and Optimization of FAISS Vector Stores
+Author: Clara Engel, Distributed Systems Lab
+Date: December 2026
+
+Abstract:
+Scaling vector search to millions of document chunks requires optimized index selection. This paper reviews indexing strategies in the FAISS framework, analyzing the trade-offs between search latency, indexing speed, and memory consumption under L2 and inner-product distance metrics.
+
+1. Vector Search Bottlenecks
+As a corpus grows, comparing a query embedding against every document vector (flat indexing) becomes computationally prohibitive, taking O(N) time. To support sub-millisecond search times, vector indexes must partition the vector space or compress the vectors.
+
+2. FAISS Index Types
+FAISS provides several indexing strategies:
+- IndexFlatL2: Calculates the exact Euclidean distance. Highly accurate but requires O(N) search time and keeps all vectors in RAM.
+- IndexIVFFlat (Inverted File Index): Partitions the vector space into voronoi cells. During search, only vectors in the closest cells are evaluated, reducing search time to O(sqrt(N)).
+- Product Quantization (PQ): Compresses vectors into short codes, reducing memory footprints by up to 90% at the cost of slight search accuracy loss.
+
+3. Application in Knowledge Guardian
+For a local study assistant, the document index is typically small (thousands of chunks), making IndexFlatL2 the optimal choice due to its high precision and fast build time. As the user uploads more PDFs and TXT files, the store utilizes python serialization to persist this index to disk (`knowledge_index.faiss`) for fast reloads on server startup.
+
+4. References
+[1] Johnson, J., Douze, M., & Jégou, H. (2019). "Billion-scale similarity search with GPUs." IEEE Transactions on Big Data.
+[2] Jégou, H., et al. (2010). "Product Quantization for Nearest Neighbor Search." IEEE Transactions on Pattern Analysis and Machine Intelligence.

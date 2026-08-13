@@ -1,0 +1,23 @@
+Title: Design Principles of Retrieval-Augmented Generation (RAG) Systems
+Author: David Miller, Systems Architect, DataGen Corp
+Date: April 2026
+
+Abstract:
+Retrieval-Augmented Generation (RAG) addresses the inherent limitations of large language models, such as hallucinations and static knowledge boundaries. We analyze the components of a robust RAG architecture, including text chunking strategies, dense retrieval vector stores, and prompt-context integration.
+
+1. Introduction to RAG
+Large Language Models (LLMs) are limited by their training cutoff dates and can generate inaccurate info (hallucinations) when asked about private or niche topics. Retrieval-Augmented Generation (RAG) solves this by fetching relevant document passages from a local corpus and injecting them into the LLM prompt as context.
+
+2. Document Ingestion and Chunking
+The RAG pipeline begins with document ingestion. Large PDFs or TXT files are parsed and split into smaller chunks. Chunking is a crucial step; if chunks are too small, they lack context, and if they are too large, they exceed the LLM's attention span and dilute the retrieval signal. A standard chunk size is 500 characters with a 50 character overlap, split recursively using paragraph and sentence boundaries.
+
+3. Dense Vector Search and FAISS
+Each text chunk is mapped to a vector embedding space using an encoder like sentence-transformers (`all-MiniLM-L6-v2`). These embeddings are indexed in a vector store like FAISS (Facebook AI Similarity Search) to support fast L2 distance or cosine similarity queries.
+Given a user query, the RAG system embeds the query, searches the FAISS index for top-k matches, fetches the corresponding text chunks, and structures a prompt:
+  "Answer the query based ONLY on the following context: [Context Chunks]"
+This ensures the LLM's response is grounded in actual data.
+
+4. References
+[1] Lewis, P., et al. (2020). "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks." NeurIPS.
+[2] Johnson, J., et al. (2019). "Billion-scale similarity search with GPUs." IEEE Transactions on Big Data.
+[3] Karpukhin, V., et al. (2020). "Dense Passage Retrieval for Open-Domain Question Answering." EMNLP.

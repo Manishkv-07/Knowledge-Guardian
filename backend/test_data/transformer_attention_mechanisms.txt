@@ -1,0 +1,32 @@
+Title: Understanding Transformer Attention Mechanisms
+Author: Dr. Amelia Vane, AI Research Institute
+Date: January 2026
+
+Abstract:
+This paper provides a rigorous analysis of the mathematical formulations underpinning attention mechanisms in Transformer architectures. We discuss the transition from traditional recurrence-based sequence models to self-attention-based models, highlighting the computational advantages and limitations of dot-product similarity metrics.
+
+1. Introduction
+Before the introduction of the Transformer architecture by Vaswani et al. (2017), sequence modeling tasks like machine translation and language modeling relied heavily on Recurrent Neural Networks (RNNs) and Long Short-Term Memory (LSTM) networks. While effective at processing sequential data, LSTMs suffer from sequential dependency bottlenecks, preventing parallelization across sequence lengths. The Transformer architecture eliminates recurrence entirely, relying on attention mechanisms to capture dependencies regardless of their distance in the input sequence.
+
+2. Mathematical Formulation of Self-Attention
+Self-attention maps a set of query vectors to a distribution over key vectors to compute a weighted sum of value vectors. Formally, given an input matrix X, we project it into Query (Q), Key (K), and Value (V) representations using learned weight matrices W_Q, W_K, and W_V:
+  Q = X * W_Q
+  K = X * W_K
+  V = X * W_V
+
+The scaled dot-product attention is defined as:
+  Attention(Q, K, V) = softmax( (Q * K^T) / sqrt(d_k) ) * V
+where d_k represents the dimension of the key vectors. The scaling factor 1/sqrt(d_k) is critical; for large values of d_k, the dot products grow large in magnitude, pushing the softmax function into regions with extremely small gradients.
+
+3. Multi-Head Attention
+Rather than performing a single attention function, Multi-Head Attention projects the queries, keys, and values h times with different, learned linear projections. This allows the model to jointly attend to information from different representation subspaces at different positions:
+  MultiHead(Q, K, V) = Concat(head_1, ..., head_h) * W_O
+where head_i = Attention(Q * W_Q_i, K * W_K_i, V * W_V_i). This concept is also widely utilized in retrieval-augmented systems to rank relevant passages.
+
+4. Overlapping Concepts and RAG Systems
+Attention maps serve as the foundational mechanism for matching query vectors against document collections. In modern Retrieval-Augmented Generation (RAG) systems, we compute similarity scores between user query embeddings and vector databases (such as FAISS) in a manner analogous to scaled dot-product attention. This enables precise document context retrieval.
+
+5. References
+[1] Vaswani, A., et al. (2017). "Attention is All You Need." Advances in Neural Information Processing Systems.
+[2] Devlin, J., et al. (2018). "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding." arXiv preprint.
+[3] Radford, A., et al. (2019). "Language Models are Unsupervised Multitask Learners." OpenAI Blog.

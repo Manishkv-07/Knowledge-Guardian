@@ -1,0 +1,22 @@
+Title: Meta-Learning and Few-Shot Learning Paradigms
+Author: Dr. Robert H., Advanced Intelligent Systems
+Date: September 2026
+
+Abstract:
+Meta-learning, or "learning to learn," aims to design neural models that can adapt to novel tasks with minimal training data. We analyze optimization-based meta-learning algorithms and contrast them with prompt-based few-shot learning in multi-billion parameter autoregressive language models.
+
+1. Optimization-based Meta-Learning
+Traditional meta-learning algorithms like Model-Agnostic Meta-Learning (MAML) focus on learning a parameter initialization that is highly sensitive to changes in task distribution. Given a new task, a few gradient descent updates on a tiny support set allow the model to generalize rapidly.
+  theta_prime = theta - alpha * grad_theta( Loss_task_i ( f_theta ) )
+This requires calculating second-order derivatives, making training computationally intensive.
+
+2. In-Context Few-Shot Learning in Transformers
+With the emergence of large language models, few-shot learning has transitioned from gradient-based updates to in-context prompt prompting. The model parameters are kept completely frozen. Instead, the model relies on its self-attention layers to identify patterns in the provided demonstrations (few-shot context examples) and replicate them in the generated completion.
+
+3. Combining Meta-Learning with Dense Retrieval
+In active knowledge assistant applications, selecting the optimal few-shot examples is critical. Rather than using static examples, systems utilize FAISS vector stores to dynamically query and retrieve few-shot matches that are semantically similar to the current user input.
+
+4. References
+[1] Finn, C., et al. (2017). "Model-Agnostic Meta-Learning for Fast Adaptation of Deep Networks." ICML.
+[2] Snell, J., et al. (2017). "Prototypical Networks for Few-shot Learning." NeurIPS.
+[3] Brown, T., et al. (2020). "Language Models are Few-Shot Learners." NeurIPS.

@@ -1,0 +1,20 @@
+Title: Hybrid Retrieval Models in Modern RAG Architecture
+Author: Dr. Jonathan Ross, Information Retrieval Group
+Date: November 2026
+
+Abstract:
+Dense vector search retrieves documents based on semantic meaning, but often misses specific keyword terms. This paper explores hybrid retrieval systems that combine sparse lexical models (such as BM25) with dense embedding models (like FAISS) to maximize both semantic and keyword matching accuracy in RAG systems.
+
+1. Sparse vs. Dense Retrieval
+Traditional search systems rely on sparse lexical retrieval algorithms like BM25, which match exact keyword terms using term frequency-inverse document frequency formulas. While fast and effective for precise queries, BM25 fails when users search using synonyms or concepts not explicitly written in the corpus.
+In contrast, dense retrieval encodes sentences into dense vector spaces using models like `all-MiniLM-L6-v2`. Similarity is measured using vector distance (e.g., L2 distance in FAISS). Dense retrieval excels at capturing semantic intent, but can fail when queries contain specific serial numbers, names, or codes.
+
+2. Hybrid Retrieval Integration
+A hybrid retrieval model runs both sparse and dense queries in parallel, combining the results. Reciprocal Rank Fusion (RRF) is typically used to merge the document rankings:
+  RRF_Score(d) = sum_{m in Models} 1 / (60 + Rank_m(d))
+The top scoring documents are retrieved, chunked, and formatted into the final LLM prompt context, reducing context mismatch.
+
+3. References
+[1] Robertson, S., et al. (2009). "The Probabilistic Relevance Framework: BM25 and Beyond." Information Retrieval.
+[2] Karpukhin, V., et al. (2020). "Dense Passage Retrieval for Open-Domain Question Answering." EMNLP.
+[3] Bendersky, M., et al. (2021). "Integrating Sparse and Dense Search in Information Retrieval." ACM SIGIR.

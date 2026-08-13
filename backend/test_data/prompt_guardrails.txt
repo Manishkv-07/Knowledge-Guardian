@@ -1,0 +1,21 @@
+Title: System Prompts and Safety Guardrails in Prompt Engineering
+Author: Dr. Gregory Ross, Ethics and Safety in AI
+Date: February 2026
+
+Abstract:
+This work discusses prompt guardrails designed to prevent adversarial jailbreaking and model output misalignment. We evaluate the structure of system prompts, constraint enforcement, and the inclusion of retrieved vector store contexts in maintaining grounding.
+
+1. System Prompts and User Input
+In modern LLM API calls, prompts are split into roles: system prompts (which define the model's persona and rules) and user prompts (which contain the current query). System prompts are given higher priority during instruction tuning, directing the model's attention to formatting and safety rules.
+
+2. Jailbreaking and Prompt Injection
+Adversarial users try to bypass system constraints through prompt injection, convincing the model to ignore safety rules (e.g., "Ignore all previous instructions and do X"). To counter this, prompt engineering implements strict boundaries, placing retrieved documents in isolated blocks and instructing the model:
+"Analyze the user query based solely on the documents provided in the [Context] tags."
+
+3. Vector Grounding
+Grounding the prompt in retrieved vector chunks (e.g., from a FAISS index) is the most effective way to enforce safety. If the model is constrained to only answer from the provided context, it is much less likely to respond to malicious, out-of-domain prompt injection queries.
+
+4. References
+[1] Perez, F., & Ribeiro, M. T. (2022). "Ignore Previous Instructions: Template Injection Attacks on LLMs." arXiv preprint.
+[2] Wei, A., et al. (2023). "Jailbroken: How Does LLM Alignment Fail?" arXiv preprint.
+[3] Carlini, N., et al. (2021). "Extracting Training Data from Large Language Models." USENIX Security.

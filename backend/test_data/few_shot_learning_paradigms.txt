@@ -1,0 +1,24 @@
+Title: Optimizing Few-Shot Learning in Large Language Models
+Author: Sarah Jenkins, Cognitive Computing Lab
+Date: February 2026
+
+Abstract:
+This paper investigates few-shot learning paradigms in large scale language models. We explore how models adapt to downstream tasks at inference time using in-context learning examples, contrasting this against parametric fine-tuning methods. We discuss prompt construction strategies to optimize few-shot retrieval templates.
+
+1. Introduction to Few-Shot Learning
+Few-shot learning refers to a model's ability to generalize and perform a new task after seeing only a handful of demonstration examples. Unlike classical supervised learning which requires thousands of training samples, human-like few-shot learning is highly sample-efficient. In natural language processing, this is achieved through In-Context Learning (ICL) without updating any underlying model parameters.
+
+2. In-Context Learning vs. Parameter Fine-Tuning
+When a large language model (e.g., GPT-4) is given a prompt containing a task description and a few input-output demonstrations, it performs the task by predicting the continuation of the prompt. This meta-learning capability arises from pre-training on diverse text corpora.
+However, in-context learning is constrained by the context window limit of the model. If a task requires broad domain knowledge, fitting examples within the prompt becomes impossible. In these scenarios, Retrieval-Augmented Generation (RAG) systems are deployed. RAG dynamically retrieves the most relevant few-shot context examples from a FAISS vector store, combining the best of in-context few-shot learning and vector search.
+
+3. Designing Effective Few-Shot Prompts
+The performance of few-shot learning is highly sensitive to the prompt structure. Important prompt engineering considerations include:
+- The order of the examples: Models exhibit "recency bias", focusing more on later examples.
+- The format: Clear boundaries using markdown or special tokens.
+- Relevance: Using semantic search to fetch examples that are semantically close to the target query.
+
+4. References
+[1] Brown, T., et al. (2020). "Language Models are Few-Shot Learners." NeurIPS.
+[2] Vinyals, O., et al. (2016). "Matching Networks for One Shot Learning." NeurIPS.
+[3] Ravi, S., & Larochelle, H. (2017). "Optimization as a Model for Few-Shot Learning." ICLR.

@@ -1,0 +1,22 @@
+Title: Low-Rank Adaptation and Parameter-Efficient Tuning Strategies
+Author: Mei-Ling Zhang, Stanford Artificial Intelligence Lab
+Date: October 2026
+
+Abstract:
+As deep learning models continue to grow, full fine-tuning becomes increasingly impractical. We evaluate Parameter-Efficient Fine-Tuning (PEFT) methods, with a focus on Low-Rank Adaptation (LoRA). We analyze training dynamics, computational savings, and parameter rank selection.
+
+1. Introduction to PEFT
+Parameter-Efficient Fine-Tuning (PEFT) aims to adapt pre-trained models to specific downstream tasks while modifying only a tiny subset of the model's parameters. This approach preserves the model's general intelligence and reduces storage requirements, as a single base model can share multiple small task-specific adapters.
+
+2. Low-Rank Adaptation (LoRA) Mechanics
+LoRA is based on the hypothesis that weight updates in deep neural networks have a low "intrinsic dimension". During adaptation, the update delta W is factorized into two low-rank matrices A and B:
+  delta W = B * A
+For a base dimension d=4096 and rank r=8, the number of updated parameters drops from millions to a few thousand. In practice, LoRA adapters are applied to the Query, Key, and Value projection weight matrices in the Transformer's self-attention block, allowing the model to adapt its attention patterns to target styles.
+
+3. Integration with Local Databases
+PEFT-tuned models are commonly paired with RAG pipelines. While the LoRA adapter fine-tunes the model's stylistic expression and formatting capability, the FAISS index database serves as the source of dynamic, factual context, creating a high-performance system for knowledge management.
+
+4. References
+[1] Hu, E. J., et al. (2021). "LoRA: Low-Rank Adaptation of Large Language Models." arXiv preprint.
+[2] Li, X. L., & Liang, P. (2021). "Prefix-Tuning: Optimizing Continuous Prompts for Generation." ACL.
+[3] He, J., et al. (2021). "Towards a Unified View of Parameter-Efficient Transfer Learning." ICLR.

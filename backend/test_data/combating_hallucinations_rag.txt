@@ -1,0 +1,24 @@
+Title: Addressing Hallucinations in LLMs via Vector Search Pipelines
+Author: Sophia Lopez, Trustworthy AI Consortium
+Date: August 2026
+
+Abstract:
+Large language models are prone to generating fictitious details, commonly known as hallucinations. This paper explores how dense vector search engines, combined with strict prompt engineering guardrails, mitigate hallucination rates by grounding generation in verifiable external database chunks.
+
+1. Understanding Hallucinations
+A hallucination occurs when an LLM generates text that is grammatically correct and semantically plausible but factually incorrect or unsupported by the training data. This stems from the model's nature as a probabilistic next-token predictor, rather than a factual lookup database.
+
+2. Mitigating Hallucinations with Vector Stores
+By coupling an LLM with a vector search database (like FAISS), we create a Retrieval-Augmented Generation (RAG) pipeline. When a user queries the model, the system first retrieves matching paragraphs using sentence embedding models (`all-MiniLM-L6-v2`). The prompt then constrains the model's generation space:
+"Context: [Retrieved Passages]
+Question: [User Query]
+Answer the question using only the context provided above. If the context does not contain the answer, say 'I cannot find the answer in the source documents.' Do not extrapolate."
+This limits the model's creative decoding, reducing hallucinations.
+
+3. Metrics and Evaluation
+Hallucination rates are evaluated using retrieval accuracy metrics, precision scores, and context relevance checks. Implementing semantic search as the first step guarantees that the model has access to relevant historical data before generation begins.
+
+4. References
+[1] Lewis, P., et al. (2020). "Retrieval-Augmented Generation for Knowledge-Intensive Tasks." NeurIPS.
+[2] Shuster, K., et al. (2021). "Retrieval Augmentation Reduces Hallucination in Conversation." arXiv preprint.
+[3] Ji, Z., et al. (2023). "Survey of Hallucination in Natural Language Processing." ACM Computing Surveys.

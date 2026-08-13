@@ -1,0 +1,14 @@
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pydantic-settings>=2.0.0
+pymupdf>=1.22.0
+langchain>=0.0.200
+langchain-community>=0.0.10
+langchain-text-splitters
+sentence-transformers>=2.2.2
+faiss-cpu>=1.7.4
+modal>=0.60.0
+python-dotenv>=1.0.0
+sqlalchemy>=2.0.0
+aiofiles>=23.0.0
+python-multipart>=0.0.6
