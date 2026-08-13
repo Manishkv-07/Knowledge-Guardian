@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.config import settings
+import math
 from app.models.document import (
     get_db, DocumentORM, MemoryORM, DocumentResponse, MemoryResponse,
-    QueryRequest, QueryResponse, MemoryCreate
+    QueryRequest, QueryResponse, PaginatedQueryResponse, QueryResultItem, RelatedChunk, MemoryCreate
 )
 from app.services.ingestion import ingestion_service
 from app.services.vector_store import vector_store
@@ -153,21 +154,58 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"detail": "Document, chunks, and associated memories deleted successfully."}
 
-@router.post("/query", response_model=List[QueryResponse])
+@router.post("/query", response_model=PaginatedQueryResponse)
 def query_knowledge_base(request: QueryRequest):
-    """Query the vector database for top K relevant passages."""
-    results = vector_store.search(request.query, k=request.top_k)
+    """Query the vector database for top passages with optional filtering, pagination, and related chunks."""
+    page = max(request.page or 1, 1)
+    page_size = max(request.page_size or 5, 1)
+    max_fetch = max(request.top_k or 50, page * page_size)
+
+    # 1. Vector similarity search with filters
+    results = vector_store.search(
+        request.query,
+        k=max_fetch,
+        doc_types=request.doc_types,
+        start_date=request.start_date,
+        end_date=request.end_date
+    )
     
-    # Map results to QueryResponse structure
-    query_responses = []
+    # 2. Enrich each result with metadata & related chunks from the same document
+    enriched_items = []
     for r in results:
-        query_responses.append({
+        doc_id = r.get("document_id", "")
+        chunk_id = r.get("chunk_id", "")
+        related = vector_store.get_related_chunks(document_id=doc_id, current_chunk_id=chunk_id, limit=2)
+        
+        enriched_items.append({
+            "chunk_id": chunk_id,
+            "document_id": doc_id,
+            "document_name": r["metadata"].get("filename", "Unknown Document"),
             "chunk": r["text"],
             "score": r["score"],
-            "document_name": r["metadata"]["filename"]
+            "similarity": r.get("similarity", 0.0),
+            "doc_type": r["metadata"].get("doc_type", "txt"),
+            "timestamp": r["metadata"].get("timestamp", ""),
+            "chunk_index": r["metadata"].get("chunk_index", 0),
+            "total_chunks": r["metadata"].get("total_chunks", 1),
+            "related_chunks": related
         })
         
-    return query_responses
+    total = len(enriched_items)
+    total_pages = math.ceil(total / page_size) if total > 0 else 1
+    
+    # 3. Apply pagination slice
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    paged_items = enriched_items[start_idx:end_idx]
+
+    return {
+        "items": paged_items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages
+    }
 
 @router.post("/{doc_id}/generate-insight", response_model=MemoryResponse)
 async def generate_insight(doc_id: int, memory_in: MemoryCreate, db: Session = Depends(get_db)):
