@@ -81,15 +81,8 @@ class VectorStore:
             raise FileNotFoundError(f"Chunk file not found for document {document_id}")
 
         # 1. Load chunks
-        try:
-            with open(chunks_file, "r", encoding="utf-8") as f:
-                chunks = json_data = pickle.load(f)  # Wait, using pickle.load on json is wrong! Let's use json.load
-        except Exception:
-            # Let's write the correct code directly:
-            pass
-
         with open(chunks_file, "r", encoding="utf-8") as f:
-            chunks = json.loads(f.read())
+            chunks = json.load(f)
 
         if not chunks:
             raise ValueError(f"No chunks found in {chunks_file}")
@@ -105,12 +98,12 @@ class VectorStore:
         for i, chunk in enumerate(chunks):
             self.metadata.append({
                 "chunk_id": chunk["id"],
-                "document_id": chunk["document_id"],
+                "document_id": str(chunk.get("document_id", document_id)),
                 "text": chunk["text"],
                 "filename": chunk["metadata"]["filename"],
-                "chunk_index": chunk["metadata"]["chunk_index"],
-                "total_chunks": chunk["metadata"]["total_chunks"],
-                "timestamp": chunk["metadata"]["timestamp"]
+                "chunk_index": chunk["metadata"].get("chunk_index", i),
+                "total_chunks": chunk["metadata"].get("total_chunks", len(chunks)),
+                "timestamp": chunk["metadata"].get("timestamp", "")
             })
 
         # 5. Save to disk
@@ -121,12 +114,20 @@ class VectorStore:
             "chunks_added": len(chunks)
         }
 
-    def search(self, query: str, k: int = 5) -> List[Dict]:
-        """Search for similar chunks
+    def search(
+        self,
+        query: str,
+        k: int = 5,
+        doc_types: List[str] = None,
+        start_date: str = None,
+        end_date: str = None
+    ) -> List[Dict]:
+        """Search for similar chunks with optional filtering
         Steps:
         1. Embed the query
-        2. Search FAISS index for top-k
-        3. Return chunks with similarity scores
+        2. Search FAISS index for candidates
+        3. Filter by doc_types and date ranges
+        4. Return top-k matching chunks with similarity scores
         Returns: List of {chunk_id, document_id, text, metadata, score, similarity}
         """
         if self.index is None or self.index.ntotal == 0:
@@ -136,41 +137,111 @@ class VectorStore:
         # 1. Embed query
         query_vector = embedding_service.embed_query(query)
 
-        # 2. Search FAISS index (clamp k to size of index)
-        k_search = min(k, self.index.ntotal)
+        # Normalize doc_types if provided
+        normalized_types = None
+        if doc_types:
+            normalized_types = set(t.lower().lstrip('.') for t in doc_types if t)
+
+        # 2. Search FAISS index - retrieve full candidate pool when filters are present to ensure recall
+        if normalized_types or start_date or end_date:
+            k_search = self.index.ntotal
+        else:
+            k_search = min(max(k * 4, 50), self.index.ntotal)
+
         distances, indices = self.index.search(query_vector, k_search)
 
         results = []
-        # 3. Formulate response dictionary list
+        # 3. Formulate response dictionary list with filter application
         for dist, idx in zip(distances[0], indices[0]):
             if 0 <= idx < len(self.metadata):
                 match = self.metadata[idx]
+                filename = match.get("filename", "")
+                
+                # Check doc_types filter
+                if normalized_types:
+                    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ""
+                    if ext not in normalized_types:
+                        continue
+
+                # Check date range filter
+                timestamp = match.get("timestamp", "")
+                if timestamp:
+                    chunk_date = timestamp[:10]  # YYYY-MM-DD
+                    if start_date and chunk_date < start_date[:10]:
+                        continue
+                    if end_date and chunk_date > end_date[:10]:
+                        continue
+
                 score = float(dist)
                 # Convert L2 distance (Euclidean distance) to similarity score between 0 and 1
                 similarity = 1.0 / (1.0 + score)
                 
                 results.append({
-                    "chunk_id": match["chunk_id"],
-                    "document_id": match["document_id"],
-                    "text": match["text"],
+                    "chunk_id": match.get("chunk_id", f"chunk_{idx}"),
+                    "document_id": str(match.get("document_id", "")),
+                    "text": match.get("text", ""),
                     "metadata": {
-                        "filename": match["filename"],
-                        "chunk_index": match["chunk_index"],
-                        "total_chunks": match["total_chunks"],
-                        "timestamp": match["timestamp"]
+                        "filename": filename,
+                        "chunk_index": match.get("chunk_index", 0),
+                        "total_chunks": match.get("total_chunks", 1),
+                        "timestamp": timestamp,
+                        "doc_type": filename.rsplit('.', 1)[-1].lower() if '.' in filename else "txt"
                     },
                     "score": score,
-                    "similarity": similarity
+                    "similarity": round(similarity, 4)
                 })
+
+                if len(results) >= k:
+                    break
                 
         return results
+
+    def get_related_chunks(self, document_id: str, current_chunk_id: str, limit: int = 2) -> List[Dict[str, Any]]:
+        """Retrieve related/adjacent chunks from the same document for context expansion."""
+        doc_chunks = [m for m in self.metadata if str(m.get("document_id")) == str(document_id)]
+        if not doc_chunks:
+            return []
+
+        # Find current chunk index
+        curr_meta = next((m for m in doc_chunks if m.get("chunk_id") == current_chunk_id), None)
+        current_idx = curr_meta.get("chunk_index", 0) if curr_meta else -1
+
+        related = []
+        
+        # Priority 1: Adjacent chunks (chunk_index - 1 or chunk_index + 1)
+        if current_idx >= 0:
+            adjacent = [
+                m for m in doc_chunks 
+                if m.get("chunk_id") != current_chunk_id and abs(m.get("chunk_index", -99) - current_idx) == 1
+            ]
+            for m in adjacent:
+                related.append({
+                    "chunk_id": m.get("chunk_id", ""),
+                    "chunk_index": m.get("chunk_index", 0),
+                    "text": m.get("text", ""),
+                    "similarity": 0.95
+                })
+                if len(related) >= limit:
+                    break
+
+        # Priority 2: Other chunks from same document if adjacent count is below limit
+        if len(related) < limit:
+            for m in doc_chunks:
+                if m.get("chunk_id") != current_chunk_id and m.get("chunk_id") not in [r["chunk_id"] for r in related]:
+                    related.append({
+                        "chunk_id": m.get("chunk_id", ""),
+                        "chunk_index": m.get("chunk_index", 0),
+                        "text": m.get("text", ""),
+                        "similarity": 0.85
+                    })
+                    if len(related) >= limit:
+                        break
+
+        return related
 
     def get_all_documents(self) -> List[str]:
         """Get list of all document IDs in the store"""
         unique_doc_ids = set(item["document_id"] for item in self.metadata)
         return list(unique_doc_ids)
-
-# Import json for internal operations
-import json
 
 vector_store = VectorStore()

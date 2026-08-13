@@ -108,9 +108,46 @@ class MemoryResponse(MemoryBase):
 
 class QueryRequest(BaseModel):
     query: str
-    top_k: Optional[int] = 3
+    top_k: Optional[int] = 20
+    doc_types: Optional[List[str]] = None  # e.g. ["pdf", "txt", "md"]
+    start_date: Optional[str] = None       # ISO 8601 or YYYY-MM-DD
+    end_date: Optional[str] = None         # ISO 8601 or YYYY-MM-DD
+    page: Optional[int] = 1
+    page_size: Optional[int] = 5
+
+class RelatedChunk(BaseModel):
+    chunk_id: str
+    chunk_index: int
+    text: str
+    similarity: float
+
+class QueryResultItem(BaseModel):
+    chunk_id: str
+    document_id: str
+    document_name: str
+    chunk: str
+    score: float
+    similarity: float
+    doc_type: str
+    timestamp: Optional[str] = None
+    chunk_index: Optional[int] = 0
+    total_chunks: Optional[int] = 1
+    related_chunks: Optional[List[RelatedChunk]] = []
 
 class QueryResponse(BaseModel):
     chunk: str
     score: float
     document_name: str
+    chunk_id: Optional[str] = None
+    document_id: Optional[str] = None
+    similarity: Optional[float] = None
+    doc_type: Optional[str] = None
+    related_chunks: Optional[List[RelatedChunk]] = []
+
+class PaginatedQueryResponse(BaseModel):
+    items: List[QueryResultItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
