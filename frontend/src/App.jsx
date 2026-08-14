@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useDropzone } from 'react-dropzone';
 import { api } from './services/api';
+import Search from './components/Search';
 
 export default function App() {
   const [documents, setDocuments] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState(null);
-  const [activeTab, setActiveTab] = useState('library'); // 'library' | 'chat' | 'insights' | 'stats'
+  const [activeTab, setActiveTab] = useState('library'); // 'library' | 'search' | 'chat' | 'insights' | 'stats'
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [topK, setTopK] = useState(3);
@@ -212,6 +213,17 @@ export default function App() {
             >
               <span>📚</span>
               <span>Library</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('search')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                activeTab === 'search'
+                  ? 'bg-accent-secondary/60 text-text-primary shadow-sm font-semibold'
+                  : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
+              }`}
+            >
+              <span>🔍</span>
+              <span>Search Knowledge</span>
             </button>
             <button
               onClick={() => setActiveTab('chat')}
@@ -717,6 +729,11 @@ export default function App() {
 
             </div>
           </div>
+        )}
+
+        {/* 🔍 Tab 5: Search Knowledge View */}
+        {activeTab === 'search' && (
+          <Search />
         )}
 
       </div>

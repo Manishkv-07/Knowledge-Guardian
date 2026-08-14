@@ -8,6 +8,14 @@ const client = axios.create({
   },
 });
 
+// TODO: Backend dependency
+// The /search endpoint is expected from the backend implementation.
+// This frontend service is ready to consume POST /search.
+export const searchKnowledge = async (query, limit = 5) => {
+  const response = await client.post('/search', { query, limit });
+  return response.data;
+};
+
 export const api = {
   /**
    * Get all uploaded documents and their statuses
@@ -63,5 +71,14 @@ export const api = {
       content: '' // populated by server
     });
     return response.data;
+  },
+
+  /**
+   * Search knowledge base using POST /search
+   * @param {string} query - The query string
+   * @param {number} limit - Number of chunks to retrieve
+   */
+  async searchKnowledge(query, limit = 5) {
+    return searchKnowledge(query, limit);
   },
 };
