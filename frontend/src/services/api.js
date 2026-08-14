@@ -50,12 +50,26 @@ export const api = {
   },
 
   /**
-   * Search knowledge base with natural language query
-   * @param {string} query - The query string
-   * @param {number} topK - Number of chunks to retrieve
+   * Search knowledge base with natural language query, filters, and pagination
+   * @param {string|object} options - The query string or query configuration object
+   * @param {number} [topK] - Number of chunks to retrieve (when options is string)
    */
-  async queryKnowledgeBase(query, topK = 3) {
-    const response = await client.post('/documents/query', { query, top_k: topK });
+  async queryKnowledgeBase(options, topK = 10) {
+    let payload = {};
+    if (typeof options === 'string') {
+      payload = { query: options, top_k: topK, page: 1, page_size: 5 };
+    } else {
+      payload = {
+        query: options.query || '',
+        doc_types: options.doc_types && options.doc_types.length > 0 ? options.doc_types : null,
+        start_date: options.start_date || null,
+        end_date: options.end_date || null,
+        page: options.page || 1,
+        page_size: options.page_size || 5,
+        top_k: options.top_k || 20,
+      };
+    }
+    const response = await client.post('/documents/query', payload);
     return response.data;
   },
 

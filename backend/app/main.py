@@ -4,6 +4,7 @@ import uvicorn
 
 from app.config import settings
 from app.api.documents import router as documents_router
+from app.api.search import router as search_router
 
 app = FastAPI(
     title="Personal Knowledge Guardian API",
@@ -22,6 +23,7 @@ app.add_middleware(
 
 # Include routers for document upload and ingestion endpoints
 app.include_router(documents_router, prefix="/api")
+app.include_router(search_router, prefix="/api")
 
 @app.get("/")
 def read_root():

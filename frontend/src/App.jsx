@@ -4,13 +4,71 @@ import { useDropzone } from 'react-dropzone';
 import { api } from './services/api';
 import Search from './components/Search';
 
+/**
+ * Reusable component to highlight query keywords in text passages.
+ * Preserves text casing and handles multi-word query tokens cleanly.
+ */
+function HighlightText({ text, query, className = "" }) {
+  if (!text) return null;
+  if (!query || !query.trim()) {
+    return <span className={className}>{text}</span>;
+  }
+
+  // Tokenize query words (length >= 2, or single alphanumeric character)
+  const terms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .map(w => w.replace(/[^a-zA-Z0-9_-]/g, ''))
+    .filter(w => w.length > 0);
+
+  if (terms.length === 0) {
+    return <span className={className}>{text}</span>;
+  }
+
+  // Build regex matching any of the query terms safely
+  const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
+  const parts = text.split(regex);
+
+  return (
+    <span className={className}>
+      {parts.map((part, i) => {
+        const isMatch = terms.some(t => t.toLowerCase() === part.toLowerCase());
+        return isMatch ? (
+          <mark
+            key={i}
+            className="bg-accent-primary/30 text-text-primary px-1 py-0.5 rounded font-medium border-b border-accent-primary/60"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        );
+      })}
+    </span>
+  );
+}
+
 export default function App() {
   const [documents, setDocuments] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState(null);
   const [activeTab, setActiveTab] = useState('library'); // 'library' | 'search' | 'chat' | 'insights' | 'stats'
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeSearchQuery, setActiveSearchQuery] = useState('');
+  const [selectedDocTypes, setSelectedDocTypes] = useState([]); // ['pdf', 'txt', 'md'] or [] for all
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  
+  // Pagination & Results States
   const [searchResults, setSearchResults] = useState([]);
-  const [topK, setTopK] = useState(3);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalResults, setTotalResults] = useState(0);
+  const [expandedRelated, setExpandedRelated] = useState({}); // { [chunk_id]: boolean }
+
+  const [topK, setTopK] = useState(20);
   const [insightType, setInsightType] = useState('summary');
   const [isUploading, setIsUploading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -57,12 +115,14 @@ export default function App() {
     }
   };
 
-  // Dropzone callback handling file drop
+  // Dropzone callback handling file drop (PDF, TXT, MD)
   const onDrop = React.useCallback(async (acceptedFiles) => {
     const file = acceptedFiles[0];
     if (!file) return;
-    if (file.type !== 'application/pdf') {
-      showError("Only PDF files are supported!");
+    
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!['pdf', 'txt', 'md'].includes(ext)) {
+      showError("Supported formats: PDF, TXT, and Markdown (MD) files.");
       return;
     }
 
@@ -82,7 +142,9 @@ export default function App() {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'application/pdf': ['.pdf']
+      'application/pdf': ['.pdf'],
+      'text/plain': ['.txt'],
+      'text/markdown': ['.md']
     },
     multiple: false,
     disabled: isUploading
@@ -100,49 +162,125 @@ export default function App() {
     }
   };
 
+  /**
+   * Execute semantic search query with current filters and pagination
+   */
+  const executeSearch = async (
+    queryText,
+    page = 1,
+    types = selectedDocTypes,
+    sDate = startDate,
+    eDate = endDate,
+    pSize = pageSize
+  ) => {
+    if (!queryText || !queryText.trim()) return { items: [], total: 0 };
+
+    setIsSearching(true);
+    setErrorMessage('');
+
+    try {
+      const response = await api.queryKnowledgeBase({
+        query: queryText,
+        doc_types: types.length > 0 ? types : null,
+        start_date: sDate || null,
+        end_date: eDate || null,
+        page: page,
+        page_size: pSize,
+        top_k: 30,
+      });
+
+      const items = response.items || (Array.isArray(response) ? response : []);
+      const total = response.total !== undefined ? response.total : items.length;
+      const totalP = response.total_pages !== undefined ? response.total_pages : 1;
+
+      setSearchResults(items);
+      setCurrentPage(page);
+      setTotalPages(totalP);
+      setTotalResults(total);
+      setActiveSearchQuery(queryText);
+
+      return { items, total };
+    } catch (err) {
+      showError("Search failed. Ensure your documents are processed and indexed.");
+      return { items: [], total: 0 };
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
   const handleSearchSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!searchQuery.trim()) return;
 
-    // Add to chat history
-    const userMessage = { role: 'user', content: searchQuery };
-    setChatHistory(prev => [...prev, userMessage]);
-    
-    setIsSearching(true);
-    setErrorMessage('');
-    
     const queryText = searchQuery;
-    setSearchQuery(''); // clear field
+    setSearchQuery(''); // clear input field
 
-    try {
-      const results = await api.queryKnowledgeBase(queryText, topK);
-      setSearchResults(results);
+    // Add user query to chat history
+    setChatHistory(prev => [...prev, { role: 'user', content: queryText }]);
 
-      // Create structured assistant response
-      let replyContent = "";
-      if (results.length === 0) {
-        replyContent = "I searched through your knowledge base, but I couldn't find any relevant passages. Make sure your documents are fully uploaded and indexed.";
-      } else {
-        replyContent = `Based on your library, here is what I found:\n\n` + 
-          results.map((res, i) => `• **From ${res.document_name}**:\n  > ${res.chunk.trim()}`).join("\n\n");
-      }
+    const { items, total } = await executeSearch(
+      queryText,
+      1,
+      selectedDocTypes,
+      startDate,
+      endDate,
+      pageSize
+    );
 
-      setChatHistory(prev => [...prev, {
-        role: 'assistant',
-        content: replyContent,
-        citations: results.map(r => r.document_name)
-      }]);
-
-    } catch (err) {
-      showError("Search failed. Ensure your documents are processed and indexed.");
-      setChatHistory(prev => [...prev, {
-        role: 'assistant',
-        content: "I encountered an error while searching your knowledge base. Please check the backend connection.",
-        citations: []
-      }]);
-    } finally {
-      setIsSearching(false);
+    // Formulate structured assistant response
+    let replyContent = "";
+    if (items.length === 0) {
+      replyContent = "I searched through your knowledge base, but I couldn't find any relevant passages matching your query and active filters. Make sure your documents are fully indexed or try broadening your filters.";
+    } else {
+      replyContent = `Based on your library, here are relevant passages (found ${total} total match${total > 1 ? 'es' : ''}):\n\n` + 
+        items.map((res) => `• **From ${res.document_name}**:\n  > ${res.chunk.trim()}`).join("\n\n");
     }
+
+    setChatHistory(prev => [...prev, {
+      role: 'assistant',
+      content: replyContent,
+      citations: items.map(r => r.document_name)
+    }]);
+  };
+
+  // Handle page change in pagination
+  const handlePageChange = (newPage) => {
+    if (newPage < 1 || newPage > totalPages || newPage === currentPage) return;
+    if (activeSearchQuery) {
+      executeSearch(activeSearchQuery, newPage, selectedDocTypes, startDate, endDate, pageSize);
+    }
+  };
+
+  // Toggle document type filter pill
+  const toggleDocTypeFilter = (type) => {
+    let updated;
+    if (selectedDocTypes.includes(type)) {
+      updated = selectedDocTypes.filter(t => t !== type);
+    } else {
+      updated = [...selectedDocTypes, type];
+    }
+    setSelectedDocTypes(updated);
+    if (activeSearchQuery) {
+      executeSearch(activeSearchQuery, 1, updated, startDate, endDate, pageSize);
+    }
+  };
+
+  // Reset all search filters
+  const resetFilters = () => {
+    setSelectedDocTypes([]);
+    setStartDate('');
+    setEndDate('');
+    if (activeSearchQuery) {
+      executeSearch(activeSearchQuery, 1, [], '', '', pageSize);
+    }
+  };
+
+  // Toggle "Related Chunks" accordion for a given result
+  const toggleRelated = (chunkId) => {
+    setExpandedRelated(prev => ({
+      ...prev,
+      [chunkId]: !prev[chunkId]
+    }));
   };
 
   const handleGenerateInsight = async () => {
@@ -169,7 +307,7 @@ export default function App() {
   };
 
   const formatSize = (bytes) => {
-    if (bytes === 0) return '0 B';
+    if (!bytes || bytes === 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -177,9 +315,10 @@ export default function App() {
   };
 
   const selectedDoc = documents.find(d => d.id === selectedDocId);
-  const totalChunksCount = documents.length * 15; // mock estimation for stats
+  const totalChunksCount = documents.reduce((acc, doc) => acc + (doc.chunk_count || 15), 0);
   const indexedDocs = documents.filter(d => d.status === 'indexed');
   const memoriesCount = documents.reduce((acc, doc) => acc + (doc.memories?.length || 0), 0);
+  const hasActiveFilters = selectedDocTypes.length > 0 || startDate !== '' || endDate !== '';
 
   return (
     <div className="min-h-screen flex bg-bg-warm text-text-primary font-sans antialiased">
@@ -227,14 +366,19 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab('chat')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
                 activeTab === 'chat'
                   ? 'bg-accent-secondary/60 text-text-primary shadow-sm font-semibold'
                   : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
               }`}
             >
-              <span>💬</span>
-              <span>Study Chat</span>
+              <div className="flex items-center gap-3">
+                <span>💬</span>
+                <span>Study Chat & Search</span>
+              </div>
+              {hasActiveFilters && (
+                <span className="h-2 w-2 rounded-full bg-accent-primary" title="Filters Active"></span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab('insights')}
@@ -264,62 +408,49 @@ export default function App() {
           </nav>
         </div>
 
-        {/* User Card & Settings */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between text-xs text-text-muted px-3 border-b border-accent-secondary/60 pb-3">
-            <span>System State</span>
-            <span className={`inline-flex items-center gap-1 font-medium ${apiStatus === 'online' ? 'text-status-success' : 'text-status-error'}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${apiStatus === 'online' ? 'bg-status-success animate-pulse' : 'bg-status-error'}`}></span>
-              {apiStatus === 'online' ? 'Connected' : 'Offline'}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3 px-2">
-            <div className="h-9 w-9 rounded-full bg-accent-tertiary/20 flex items-center justify-center font-bold text-accent-tertiary">
-              MK
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-text-primary">Manish K.</p>
-              <p className="text-[10px] text-text-muted">Knowledge Worker</p>
+        {/* System Status Footnote */}
+        <div className="pt-4 border-t border-accent-secondary/40 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-text-secondary">System Backend</span>
+            <div className="flex items-center gap-1.5">
+              <span className={`h-2 w-2 rounded-full ${apiStatus === 'online' ? 'bg-status-success' : apiStatus === 'checking' ? 'bg-accent-primary animate-pulse' : 'bg-status-error'}`}></span>
+              <span className="text-[11px] font-medium capitalize text-text-secondary">{apiStatus}</span>
             </div>
           </div>
+          <p className="text-[10px] text-text-muted">Embedding: 384-d FAISS</p>
         </div>
       </aside>
 
-      {/* 🖥️ Main Workspace Container */}
-      <div className="flex-1 flex flex-col overflow-hidden max-w-[1200px] mx-auto w-full px-8 py-6">
+      {/* 📄 Main Content Area */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden p-8">
         
-        {/* Top Header Navigation */}
-        <header className="flex items-center justify-between pb-6 border-b border-accent-secondary/60 mb-6">
-          <div className="w-96 relative">
-            <input
-              type="text"
-              placeholder="Search library..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (setActiveTab('chat'), handleSearchSubmit())}
-              className="w-full bg-white border border-accent-secondary focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-full px-4 py-2 pl-10 text-sm outline-none transition-all placeholder-text-muted"
-            />
-            <svg className="absolute left-3.5 top-3 h-4 w-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+        {/* Header Bar */}
+        <header className="flex items-center justify-between pb-6 mb-6 border-b border-accent-secondary/40 shrink-0">
+          <div>
+            <span className="text-xs text-text-secondary uppercase tracking-wider font-semibold">Knowledge Guardian Workspace</span>
+            <h1 className="font-serif text-xl font-bold text-text-primary">
+              {activeTab === 'library' && 'Document Library & Ingestion'}
+              {activeTab === 'chat' && 'Study Chat & Advanced Retrieval'}
+              {activeTab === 'insights' && 'Proactive Memory & Concepts'}
+              {activeTab === 'stats' && 'Analytics & Vector Index Metrics'}
+            </h1>
           </div>
 
           <button
             onClick={() => setShowUploadModal(true)}
-            className="bg-accent-primary hover:bg-accent-tertiary text-white font-medium text-xs px-4 py-2.5 rounded-full transition-all duration-200 shadow-sm flex items-center gap-1.5"
+            className="bg-accent-primary hover:bg-accent-tertiary text-white font-medium text-xs px-4 py-2.5 rounded-lg transition-all duration-200 shadow-sm flex items-center gap-2 cursor-pointer"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            Add PDF Document
+            Ingest Document (PDF, TXT, MD)
           </button>
         </header>
 
         {errorMessage && (
-          <div className="mb-4 bg-status-error/10 border border-status-error/20 text-status-error text-xs px-4 py-2.5 rounded-lg flex items-center justify-between">
+          <div className="mb-4 bg-status-error/10 border border-status-error/20 text-status-error text-xs px-4 py-2.5 rounded-lg flex items-center justify-between shrink-0">
             <span>{errorMessage}</span>
-            <button onClick={() => setErrorMessage('')} className="hover:opacity-85 text-sm">×</button>
+            <button onClick={() => setErrorMessage('')} className="hover:opacity-85 text-sm cursor-pointer">×</button>
           </div>
         )}
 
@@ -327,8 +458,8 @@ export default function App() {
         {activeTab === 'library' && (
           <div className="flex-1 overflow-y-auto space-y-8 pr-1">
             <div>
-              <h1 className="font-serif text-2xl font-bold text-text-primary tracking-tight">Welcome back, Manish 👋</h1>
-              <p className="text-xs text-text-secondary mt-1">Your personal research guardian is active and monitoring changes.</p>
+              <h1 className="font-serif text-2xl font-bold text-text-primary tracking-tight">Welcome back 👋</h1>
+              <p className="text-xs text-text-secondary mt-1">Your personal research guardian is active and indexing document knowledge.</p>
             </div>
 
             {/* Stats Row */}
@@ -364,11 +495,12 @@ export default function App() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                     </svg>
                     <p className="text-sm font-serif font-semibold text-text-primary">Your library is currently empty</p>
-                    <p className="text-xs text-text-secondary mt-1">Upload a research PDF above to begin ingestion and semantic indexing.</p>
+                    <p className="text-xs text-text-secondary mt-1">Upload a research PDF, TXT, or MD document above to begin semantic indexing.</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {documents.map((doc) => {
+                      const ext = doc.filename.split('.').pop()?.toUpperCase() || 'DOC';
                       const statusStyles = {
                         uploaded: 'bg-accent-secondary/50 text-text-secondary border-accent-secondary',
                         processing: 'bg-accent-primary/20 text-accent-tertiary border-accent-primary/40 animate-pulse',
@@ -383,10 +515,10 @@ export default function App() {
                         >
                           <div>
                             <div className="flex items-start justify-between gap-2 mb-2">
-                              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-bg-warm text-accent-tertiary font-mono">PDF</span>
+                              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-bg-warm text-accent-tertiary font-mono">{ext}</span>
                               <button
                                 onClick={(e) => handleDelete(doc.id, e)}
-                                className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-status-error transition-all p-0.5 rounded hover:bg-bg-warm"
+                                className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-status-error transition-all p-0.5 rounded hover:bg-bg-warm cursor-pointer"
                                 title="Remove File"
                               >
                                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -400,7 +532,7 @@ export default function App() {
                           </div>
 
                           <div className="mt-4 pt-3 border-t border-bg-warm flex items-center justify-between text-xs text-text-muted">
-                            <span>{formatSize(doc.file_size)}</span>
+                            <span>{formatSize(doc.file_size)} • {doc.chunk_count || 0} chunks</span>
                             <span className={`px-2 py-0.5 rounded-full border text-[10px] uppercase font-bold tracking-wider ${statusStyles[doc.status] || 'bg-bg-warm text-text-secondary'}`}>
                               {doc.status}
                             </span>
@@ -420,16 +552,16 @@ export default function App() {
                     
                     <div className="relative">
                       <span className="absolute -left-[26px] top-0 bg-accent-primary h-2 w-2 rounded-full ring-4 ring-white"></span>
-                      <p className="font-semibold text-text-primary">Ingestion complete</p>
-                      <p className="text-text-muted mt-0.5">Parsed structure & generated embeddings for document library.</p>
-                      <span className="text-[10px] text-text-muted block mt-1">Today, 2:34 PM</span>
+                      <p className="font-semibold text-text-primary">Ingestion pipeline active</p>
+                      <p className="text-text-muted mt-0.5">Automated parsing & FAISS embedding generation ready.</p>
+                      <span className="text-[10px] text-text-muted block mt-1">Today</span>
                     </div>
 
                     <div className="relative">
                       <span className="absolute -left-[26px] top-0 bg-accent-tertiary h-2 w-2 rounded-full ring-4 ring-white"></span>
-                      <p className="font-semibold text-text-primary">Semantic index updated</p>
-                      <p className="text-text-muted mt-0.5">Appended vectors successfully into local FAISS vector store.</p>
-                      <span className="text-[10px] text-text-muted block mt-1">Yesterday, 5:12 PM</span>
+                      <p className="font-semibold text-text-primary">Advanced search enabled</p>
+                      <p className="text-text-muted mt-0.5">Filtering by doc type, dates, highlighting & related chunks online.</p>
+                      <span className="text-[10px] text-text-muted block mt-1">Active</span>
                     </div>
                   </div>
                 </div>
@@ -439,12 +571,14 @@ export default function App() {
           </div>
         )}
 
-        {/* 💬 Tab 2: Study Chat / Ask View */}
+        {/* 💬 Tab 2: Study Chat / Ask View with Advanced Search */}
         {activeTab === 'chat' && (
           <div className="flex-1 flex overflow-hidden gap-6">
             
-            {/* Chat Thread */}
+            {/* Chat & Query Thread */}
             <div className="flex-1 flex flex-col justify-between bg-white border border-accent-secondary/50 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.02)] overflow-hidden">
+              
+              {/* Chat messages */}
               <div className="flex-1 overflow-y-auto p-6 space-y-5">
                 {chatHistory.map((chat, idx) => (
                   <div
@@ -452,13 +586,12 @@ export default function App() {
                     className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[75%] rounded-2xl px-5 py-3.5 text-sm leading-relaxed shadow-sm ${
+                      className={`max-w-[80%] rounded-2xl px-5 py-3.5 text-sm leading-relaxed shadow-sm ${
                         chat.role === 'user'
                           ? 'bg-sidebar-warm text-text-primary font-medium border border-accent-secondary/50 rounded-tr-none'
                           : 'bg-white border border-accent-secondary/60 text-text-primary rounded-tl-none'
                       }`}
                     >
-                      {/* Render text using ReactMarkdown for gorgeous academic layout */}
                       <div className="markdown-body text-text-primary space-y-1 text-sm leading-relaxed">
                         <ReactMarkdown>{chat.content}</ReactMarkdown>
                       </div>
@@ -467,7 +600,7 @@ export default function App() {
                         <div className="mt-3 pt-2.5 border-t border-bg-warm flex flex-wrap gap-1.5 items-center">
                           <span className="text-[10px] text-text-muted uppercase font-bold tracking-wider">Citations:</span>
                           {Array.from(new Set(chat.citations)).map((docName, i) => (
-                            <span key={i} className="text-[10px] font-medium bg-bg-warm text-accent-tertiary px-2 py-0.5 rounded border border-accent-secondary/40 max-w-[150px] truncate" title={docName}>
+                            <span key={i} className="text-[10px] font-medium bg-bg-warm text-accent-tertiary px-2 py-0.5 rounded border border-accent-secondary/40 max-w-[170px] truncate" title={docName}>
                               📖 {docName}
                             </span>
                           ))}
@@ -483,55 +616,262 @@ export default function App() {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      Searching knowledge base...
+                      Searching knowledge base with active filters...
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Chat Input */}
-              <form onSubmit={handleSearchSubmit} className="border-t border-accent-secondary/60 bg-sidebar-warm/20 p-4 flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Ask a question about your books or papers..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="flex-1 bg-white border border-accent-secondary focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl px-4 py-3 text-sm outline-none transition-all placeholder-text-muted"
-                />
-                <button
-                  type="submit"
-                  disabled={isSearching || !searchQuery.trim()}
-                  className="bg-accent-primary hover:bg-accent-tertiary disabled:opacity-40 text-white font-medium text-sm px-5 py-3 rounded-xl transition-all duration-200 shadow-sm flex items-center gap-1 shrink-0"
-                >
-                  Ask
-                </button>
-              </form>
+              {/* Chat Input & Filter Controls */}
+              <div className="border-t border-accent-secondary/60 bg-sidebar-warm/20 p-4 space-y-3">
+                
+                {/* Search Filter Header / Quick Toggles */}
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-bold text-text-secondary uppercase tracking-wider flex items-center gap-1">
+                      <svg className="h-3.5 w-3.5 text-accent-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                      </svg>
+                      Doc Types:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedDocTypes([]); if (activeSearchQuery) executeSearch(activeSearchQuery, 1, [], startDate, endDate, pageSize); }}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
+                        selectedDocTypes.length === 0
+                          ? 'bg-accent-primary text-white shadow-xs'
+                          : 'bg-white text-text-secondary border border-accent-secondary/50 hover:bg-bg-warm'
+                      }`}
+                    >
+                      All Types
+                    </button>
+                    {['pdf', 'txt', 'md'].map((type) => {
+                      const isActive = selectedDocTypes.includes(type);
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => toggleDocTypeFilter(type)}
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase transition-all cursor-pointer ${
+                            isActive
+                              ? 'bg-accent-primary text-white shadow-xs'
+                              : 'bg-white text-text-secondary border border-accent-secondary/50 hover:bg-bg-warm'
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowFilterPanel(!showFilterPanel)}
+                      className="text-[11px] font-semibold text-accent-tertiary hover:text-accent-primary flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>📅 Date Filters</span>
+                      <span>{showFilterPanel ? '▲' : '▼'}</span>
+                    </button>
+
+                    {hasActiveFilters && (
+                      <button
+                        type="button"
+                        onClick={resetFilters}
+                        className="text-[10px] font-bold text-status-error hover:underline cursor-pointer ml-2"
+                      >
+                        Reset All
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Expanded Date Range Filter Drawer */}
+                {showFilterPanel && (
+                  <div className="bg-white border border-accent-secondary/50 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs shadow-xs">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider block">From Date</label>
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => {
+                          setStartDate(e.target.value);
+                          if (activeSearchQuery) executeSearch(activeSearchQuery, 1, selectedDocTypes, e.target.value, endDate, pageSize);
+                        }}
+                        className="w-full bg-bg-warm border border-accent-secondary/60 rounded-lg px-2.5 py-1.5 text-xs text-text-primary outline-none focus:border-accent-primary"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider block">To Date</label>
+                      <input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => {
+                          setEndDate(e.target.value);
+                          if (activeSearchQuery) executeSearch(activeSearchQuery, 1, selectedDocTypes, startDate, e.target.value, pageSize);
+                        }}
+                        className="w-full bg-bg-warm border border-accent-secondary/60 rounded-lg px-2.5 py-1.5 text-xs text-text-primary outline-none focus:border-accent-primary"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Input Form */}
+                <form onSubmit={handleSearchSubmit} className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Ask a question or search for concepts (e.g. 'Transformer attention', 'FAISS vectors')..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="flex-1 bg-white border border-accent-secondary focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl px-4 py-3 text-sm outline-none transition-all placeholder-text-muted"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSearching || !searchQuery.trim()}
+                    className="bg-accent-primary hover:bg-accent-tertiary disabled:opacity-40 text-white font-medium text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-sm flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    Search
+                  </button>
+                </form>
+              </div>
             </div>
 
-            {/* Context Sidebar */}
-            <div className="w-80 bg-white border border-accent-secondary/50 rounded-2xl p-5 shadow-[0_4px_12px_rgba(0,0,0,0.02)] flex flex-col shrink-0">
-              <h3 className="font-serif text-sm font-bold text-text-primary border-b border-bg-warm pb-3">Retrieved Citations</h3>
-              <div className="flex-1 overflow-y-auto mt-4 space-y-3.5 pr-0.5">
-                {searchResults.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-center p-4">
-                    <p className="text-xs text-text-muted">Semantic chunks matching your last query will display here.</p>
-                  </div>
-                ) : (
-                  searchResults.map((res, i) => (
-                    <div key={i} className="bg-bg-warm/50 border border-accent-secondary/30 rounded-lg p-3 space-y-2 text-xs">
-                      <div className="flex items-center justify-between text-[10px] text-text-secondary">
-                        <span className="font-semibold text-accent-tertiary truncate max-w-[150px]">{res.document_name}</span>
-                        <span className="bg-white px-1.5 py-0.5 rounded border border-accent-secondary/40 font-mono">
-                          Dist: {res.score.toFixed(3)}
-                        </span>
-                      </div>
-                      <p className="text-text-primary leading-relaxed font-serif italic text-[11px] bg-white p-2.5 rounded border border-accent-secondary/20">
-                        "{res.chunk.trim()}"
-                      </p>
-                    </div>
-                  ))
+            {/* Context & Advanced Search Results Sidebar */}
+            <div className="w-96 bg-white border border-accent-secondary/50 rounded-2xl p-5 shadow-[0_4px_12px_rgba(0,0,0,0.02)] flex flex-col shrink-0 overflow-hidden">
+              
+              {/* Header with Result Count */}
+              <div className="flex items-center justify-between border-b border-bg-warm pb-3">
+                <div>
+                  <h3 className="font-serif text-sm font-bold text-text-primary">Retrieved Passages</h3>
+                  <p className="text-[10px] text-text-secondary">
+                    {totalResults > 0 ? `${totalResults} match${totalResults > 1 ? 'es' : ''} found` : 'Semantic vector matches'}
+                  </p>
+                </div>
+                {activeSearchQuery && (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-accent-secondary/50 text-accent-tertiary font-mono truncate max-w-[120px]" title={activeSearchQuery}>
+                    "{activeSearchQuery}"
+                  </span>
                 )}
               </div>
+
+              {/* Result List with Highlighting and Related Chunks */}
+              <div className="flex-1 overflow-y-auto mt-4 space-y-4 pr-1">
+                {searchResults.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-4 space-y-2">
+                    <svg className="h-8 w-8 text-text-muted opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <p className="text-xs text-text-muted">Enter a query to retrieve highlighted passages with citations & related sections.</p>
+                  </div>
+                ) : (
+                  searchResults.map((res, i) => {
+                    const chunkId = res.chunk_id || `res_${i}`;
+                    const isExpanded = !!expandedRelated[chunkId];
+                    const docType = res.doc_type || res.document_name.split('.').pop()?.toLowerCase() || 'txt';
+                    const hasRelated = res.related_chunks && res.related_chunks.length > 0;
+
+                    return (
+                      <div key={chunkId} className="bg-bg-warm/50 border border-accent-secondary/40 rounded-xl p-3.5 space-y-2.5 text-xs shadow-2xs">
+                        
+                        {/* Result Header */}
+                        <div className="flex items-center justify-between text-[10px] text-text-secondary gap-1">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="px-1.5 py-0.5 rounded bg-accent-secondary/60 text-accent-tertiary font-mono uppercase font-bold text-[9px]">
+                              {docType}
+                            </span>
+                            <span className="font-semibold text-text-primary truncate" title={res.document_name}>
+                              {res.document_name}
+                            </span>
+                          </div>
+                          <span className="bg-white px-2 py-0.5 rounded border border-accent-secondary/40 font-mono text-[10px] shrink-0 text-text-secondary">
+                            Score: {(res.similarity ? res.similarity * 100 : (1.0 / (1.0 + res.score)) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+
+                        {/* Highlighted Chunk Text */}
+                        <div className="text-text-primary leading-relaxed font-serif text-[11px] bg-white p-3 rounded-lg border border-accent-secondary/30">
+                          <HighlightText text={res.chunk.trim()} query={activeSearchQuery} />
+                        </div>
+
+                        {/* Task 4: Related Chunks from Same Document */}
+                        {hasRelated && (
+                          <div className="pt-1">
+                            <button
+                              type="button"
+                              onClick={() => toggleRelated(chunkId)}
+                              className="w-full flex items-center justify-between text-[10px] font-semibold text-accent-tertiary hover:text-accent-primary py-1 px-1.5 rounded hover:bg-white/80 transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-1">
+                                <span>🔗</span>
+                                <span>Related from this document ({res.related_chunks.length})</span>
+                              </span>
+                              <span>{isExpanded ? '▲ Hide' : '▼ View'}</span>
+                            </button>
+
+                            {isExpanded && (
+                              <div className="mt-2 space-y-2 pl-2 border-l-2 border-accent-primary/40">
+                                {res.related_chunks.map((rel, rIdx) => (
+                                  <div key={rIdx} className="bg-white/90 p-2.5 rounded border border-accent-secondary/30 text-[10px] space-y-1">
+                                    <div className="flex items-center justify-between text-text-muted font-mono text-[9px]">
+                                      <span>Section #{rel.chunk_index + 1}</span>
+                                      <span className="text-accent-tertiary">Context match</span>
+                                    </div>
+                                    <p className="text-text-primary font-serif italic line-clamp-3 leading-relaxed">
+                                      <HighlightText text={rel.text.trim()} query={activeSearchQuery} />
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Task 3: Pagination Controls Bar */}
+              {totalResults > 0 && totalPages > 1 && (
+                <div className="mt-3 pt-3 border-t border-bg-warm flex items-center justify-between text-xs shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1 || isSearching}
+                    className="px-2.5 py-1 rounded bg-bg-warm hover:bg-accent-secondary/40 disabled:opacity-30 border border-accent-secondary/50 text-[11px] font-semibold transition-all cursor-pointer"
+                  >
+                    ‹ Prev
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => handlePageChange(p)}
+                        className={`h-6 w-6 rounded text-[11px] font-bold transition-all cursor-pointer ${
+                          currentPage === p
+                            ? 'bg-accent-primary text-white shadow-xs'
+                            : 'bg-bg-warm text-text-secondary hover:bg-accent-secondary/30'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage >= totalPages || isSearching}
+                    className="px-2.5 py-1 rounded bg-bg-warm hover:bg-accent-secondary/40 disabled:opacity-30 border border-accent-secondary/50 text-[11px] font-semibold transition-all cursor-pointer"
+                  >
+                    Next ›
+                  </button>
+                </div>
+              )}
+
             </div>
 
           </div>
@@ -575,7 +915,7 @@ export default function App() {
                             key={t}
                             type="button"
                             onClick={() => setInsightType(t)}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border capitalize transition-all ${
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border capitalize transition-all cursor-pointer ${
                               insightType === t 
                                 ? 'bg-accent-primary text-white border-accent-primary' 
                                 : 'bg-bg-warm border-accent-secondary text-text-secondary hover:text-text-primary'
@@ -591,7 +931,7 @@ export default function App() {
                   <button
                     onClick={handleGenerateInsight}
                     disabled={isGenerating || !selectedDocId}
-                    className="w-full bg-accent-primary hover:bg-accent-tertiary disabled:opacity-40 text-white font-semibold text-xs py-2.5 rounded-lg transition-all duration-200 flex items-center justify-center gap-1.5 shadow-sm"
+                    className="w-full bg-accent-primary hover:bg-accent-tertiary disabled:opacity-40 text-white font-semibold text-xs py-2.5 rounded-lg transition-all duration-200 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
                   >
                     {isGenerating ? (
                       <>
@@ -738,16 +1078,16 @@ export default function App() {
 
       </div>
 
-      {/* 📁 Upload Modal (uses React-Dropzone drag and drop area) */}
+      {/* 📁 Upload Modal (PDF, TXT, MD) */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-text-primary/20 backdrop-blur-xs flex items-center justify-center z-50">
           <div className="bg-white border border-accent-secondary rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
             
             <div className="flex items-center justify-between border-b border-bg-warm pb-3">
-              <h3 className="font-serif font-bold text-base text-text-primary">Ingest PDF Document</h3>
+              <h3 className="font-serif font-bold text-base text-text-primary">Ingest Document</h3>
               <button 
                 onClick={() => setShowUploadModal(false)} 
-                className="text-text-muted hover:text-text-primary text-xl font-medium"
+                className="text-text-muted hover:text-text-primary text-xl font-medium cursor-pointer"
               >
                 &times;
               </button>
@@ -777,9 +1117,9 @@ export default function App() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-3-3v6m-9 1V4a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
                     </svg>
                     <span className="text-xs font-semibold text-text-primary">
-                      {isDragActive ? "Drop the PDF here..." : "Drag & drop or click to select PDF"}
+                      {isDragActive ? "Drop the file here..." : "Drag & drop or click to select file"}
                     </span>
-                    <span className="text-[10px] text-text-muted">Supports research PDF articles up to 15MB</span>
+                    <span className="text-[10px] text-text-muted">Supports PDF, TXT, and Markdown (MD) documents</span>
                   </>
                 )}
               </div>
@@ -788,7 +1128,7 @@ export default function App() {
             <div className="flex justify-end gap-2 border-t border-bg-warm pt-3">
               <button
                 onClick={() => setShowUploadModal(false)}
-                className="px-4 py-2 bg-bg-warm hover:bg-accent-secondary/30 rounded-lg text-xs font-semibold text-text-secondary border border-accent-secondary/60"
+                className="px-4 py-2 bg-bg-warm hover:bg-accent-secondary/30 rounded-lg text-xs font-semibold text-text-secondary border border-accent-secondary/60 cursor-pointer"
               >
                 Cancel
               </button>
