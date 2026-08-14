@@ -25,7 +25,7 @@ async def search_knowledge(
         raise HTTPException(status_code=404, detail="No documents in knowledge base")
 
     # 3. Call search service
-    results = store.search(query=request.query, k=request.limit)
+    results = store.search(request.query, request.limit)
 
     # 4. Format results
     search_results = []
