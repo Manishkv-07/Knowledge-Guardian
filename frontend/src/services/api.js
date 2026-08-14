@@ -12,7 +12,7 @@ const client = axios.create({
 // The /search endpoint is expected from the backend implementation.
 // This frontend service is ready to consume POST /search.
 export const searchKnowledge = async (query, limit = 5) => {
-  const response = await client.post('/search', { query, limit });
+  const response = await client.post('/documents/search', { query, limit });
   return response.data;
 };
 

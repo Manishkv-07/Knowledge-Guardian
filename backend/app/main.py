@@ -31,6 +31,7 @@ def read_root():
     return {"status": "healthy"}
 
 @app.get("/health")
+@app.get("/api/health")
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}

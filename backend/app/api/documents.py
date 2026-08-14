@@ -11,6 +11,7 @@ from app.models.document import (
     get_db, DocumentORM, MemoryORM, DocumentResponse, MemoryResponse,
     QueryRequest, QueryResponse, PaginatedQueryResponse, QueryResultItem, RelatedChunk, MemoryCreate
 )
+from app.models.search import SearchQuery, SearchResult, SearchResponse
 from app.services.ingestion import ingestion_service
 from app.services.vector_store import vector_store
 from app.utils.helpers import logger, is_allowed_file, clean_filename
@@ -274,3 +275,33 @@ async def generate_insight(doc_id: int, memory_in: MemoryCreate, db: Session = D
     db.refresh(db_mem)
 
     return db_mem
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search_knowledge_base(request: SearchQuery):
+    """Search the FAISS knowledge base and return relevant chunks with similarity scores."""
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    if vector_store.index is None or vector_store.index.ntotal == 0:
+        raise HTTPException(status_code=404, detail="No documents in knowledge base. Upload and index documents first.")
+
+    results = vector_store.search(request.query, request.limit)
+
+    search_results = [
+        SearchResult(
+            chunk_id=r["chunk_id"],
+            text=r["text"],
+            document_id=r["document_id"],
+            filename=r["filename"],
+            similarity=r["similarity"],
+            chunk_index=r["chunk_index"]
+        )
+        for r in results
+    ]
+
+    return SearchResponse(
+        query=request.query,
+        results=search_results,
+        total=len(search_results)
+    )
