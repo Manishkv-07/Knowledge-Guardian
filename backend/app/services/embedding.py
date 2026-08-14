@@ -26,6 +26,10 @@ class EmbeddingService:
         """Generate embedding for a single query string
         Returns: numpy array of the query embedding (float32)
         """
+        if not query or not query.strip():
+            logger.warning("Empty or whitespace query provided. Returning zero embedding.")
+            return np.zeros((1, self.dimension), dtype=np.float32)
+            
         logger.info(f"Generating embedding for query: '{query[:50]}...'")
         embedding = self.model.encode([query])
         return np.array(embedding).astype(np.float32)

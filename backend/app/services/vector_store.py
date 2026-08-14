@@ -134,6 +134,10 @@ class VectorStore:
             logger.warning("Search triggered but vector index is empty.")
             return []
 
+        if not query or not query.strip():
+            logger.warning("Search triggered with empty or whitespace query.")
+            return []
+
         # 1. Embed query
         query_vector = embedding_service.embed_query(query)
 
@@ -173,22 +177,25 @@ class VectorStore:
                         continue
 
                 score = float(dist)
-                # Convert L2 distance (Euclidean distance) to similarity score between 0 and 1
-                similarity = 1.0 / (1.0 + score)
+                # Convert L2 distance (Euclidean distance) to similarity score between 0 and 1 using similarity = 1 - (distance / 2)
+                similarity = max(0.0, min(1.0, 1.0 - (score / 2.0)))
                 
                 results.append({
                     "chunk_id": match.get("chunk_id", f"chunk_{idx}"),
-                    "document_id": str(match.get("document_id", "")),
                     "text": match.get("text", ""),
+                    "document_id": str(match.get("document_id", "")),
+                    "filename": filename,
+                    "chunk_index": match.get("chunk_index", 0),
+                    "similarity": round(similarity, 4),
+                    # Keep these nested fields for compatibility with existing query and insight APIs in documents.py
+                    "score": score,
                     "metadata": {
                         "filename": filename,
                         "chunk_index": match.get("chunk_index", 0),
                         "total_chunks": match.get("total_chunks", 1),
                         "timestamp": timestamp,
                         "doc_type": filename.rsplit('.', 1)[-1].lower() if '.' in filename else "txt"
-                    },
-                    "score": score,
-                    "similarity": round(similarity, 4)
+                    }
                 })
 
                 if len(results) >= k:
