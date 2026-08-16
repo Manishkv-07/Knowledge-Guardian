@@ -5,6 +5,8 @@ import uvicorn
 from app.config import settings
 from app.api.documents import router as documents_router
 from app.api.search import router as search_router
+from app.api.chat import router as chat_router
+from app.api.queries import router as queries_router
 
 app = FastAPI(
     title="Personal Knowledge Guardian API",
@@ -24,6 +26,8 @@ app.add_middleware(
 # Include routers for document upload and ingestion endpoints
 app.include_router(documents_router, prefix="/api")
 app.include_router(search_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
+app.include_router(queries_router, prefix="/api")
 
 @app.get("/")
 def read_root():
@@ -31,6 +35,7 @@ def read_root():
     return {"status": "healthy"}
 
 @app.get("/health")
+@app.get("/api/health")
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}

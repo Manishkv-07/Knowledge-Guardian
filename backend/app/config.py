@@ -2,6 +2,9 @@ import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
+# Resolve paths relative to project root
+BASE_DIR = Path(__file__).resolve().parent.parent
+
 class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8087
@@ -27,14 +30,19 @@ class Settings(BaseSettings):
     MODAL_ENDPOINT_URL: str = ""
     MODAL_API_KEY: str = ""
 
+    # --- LLM Configuration (Updated for Colab) ---
+    LLM_ENDPOINT_URL: str = "http://localhost:11434/v1"
+    LLM_MODEL: str = "llama3.1"
+    LLM_TEMPERATURE: float = 0.3
+    LLM_MAX_TOKENS: int = 1024
+    USE_COLAB_LLM: bool = True
+    COLAB_ENDPOINT_FILE: str = "colab_endpoint.txt"
+
     class Config:
-        env_file = ".env"
+        env_file = str(BASE_DIR / ".env")
         extra = "ignore"
 
 settings = Settings()
-
-# Resolve paths relative to project root
-BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Automatic directory creation
 for dir_path in [settings.UPLOAD_DIR, settings.CHUNK_DIR, settings.VECTOR_STORE_DIR, settings.MEMORY_DIR]:

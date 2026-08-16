@@ -114,6 +114,7 @@ class QueryRequest(BaseModel):
     end_date: Optional[str] = None         # ISO 8601 or YYYY-MM-DD
     page: Optional[int] = 1
     page_size: Optional[int] = 5
+    conversation_id: Optional[str] = None
 
 class RelatedChunk(BaseModel):
     chunk_id: str

@@ -1,7 +1,9 @@
 import os
 import shutil
 import httpx
+import json
 from fastapi import APIRouter, UploadFile, File, Depends, BackgroundTasks, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -13,6 +15,8 @@ from app.models.document import (
 )
 from app.services.ingestion import ingestion_service
 from app.services.vector_store import vector_store
+from app.services.llm_client import llm_client
+from app.services.memory_manager import memory_manager
 from app.utils.helpers import logger, is_allowed_file, clean_filename
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -225,26 +229,19 @@ async def generate_insight(doc_id: int, memory_in: MemoryCreate, db: Session = D
     prompt = f"Analyze the following context from '{db_doc.filename}' and provide a {insight_type}:\n\nContext:\n{context}"
 
     llm_output = ""
-    # Try calling Modal if configured
-    if settings.MODAL_ENDPOINT_URL:
+    # Try calling the LLM client (Ollama/Modal) if an endpoint is configured
+    if llm_client.base_url:
         try:
-            logger.info(f"Calling Modal LLM endpoint at {settings.MODAL_ENDPOINT_URL}...")
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    settings.MODAL_ENDPOINT_URL,
-                    headers={"Authorization": f"Bearer {settings.MODAL_API_KEY}"} if settings.MODAL_API_KEY else {},
-                    json={"prompt": prompt, "max_tokens": 256},
-                    timeout=30.0
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    llm_output = data.get("text", data.get("choices", [{}])[0].get("text", ""))
-                else:
-                    logger.error(f"Modal API error: {response.status_code} - {response.text}")
+            chunks_input = [{"text": context, "filename": db_doc.filename, "document_id": str(doc_id)}]
+            query_input = f"Analyze the context and generate a {insight_type}."
+            logger.info(f"Requesting LLM insight ({insight_type}) via LLMClient...")
+            res = llm_client.generate_answer(query_input, chunks_input)
+            if res.get("source") == "llm":
+                llm_output = res["answer"]
         except Exception as e:
-            logger.error(f"Failed to connect to Modal LLM: {e}")
+            logger.error(f"Failed to generate LLM insight: {e}")
 
-    # Fallback to local heuristic / mock agent response if Modal fails or is not set
+    # Fallback to local heuristic / mock agent response if LLM fails or is not configured
     if not llm_output.strip():
         logger.info("Using mock/local guardian response engine...")
         if insight_type == "summary":
@@ -274,3 +271,127 @@ async def generate_insight(doc_id: int, memory_in: MemoryCreate, db: Session = D
     db.refresh(db_mem)
 
     return db_mem
+
+@router.post("/query-stream")
+async def query_knowledge_base_stream(request: QueryRequest):
+    """Query the vector database and stream the answer along with matching document citations."""
+    page = max(request.page or 1, 1)
+    page_size = max(request.page_size or 5, 1)
+    max_fetch = max(request.top_k or 50, page * page_size)
+
+    # 1. Similarity search in vector store
+    results = vector_store.search(
+        request.query,
+        k=max_fetch,
+        doc_types=request.doc_types,
+        start_date=request.start_date,
+        end_date=request.end_date
+    )
+    
+    # Resolve conversation_id
+    conversation_id = request.conversation_id
+    if not conversation_id:
+        title = request.query[:30] + "..." if len(request.query) > 30 else request.query
+        conversation_id = memory_manager.create_conversation(title=title)
+    else:
+        try:
+            # Check if conversation exists
+            memory_manager.get_messages(conversation_id)
+        except ValueError:
+            title = request.query[:30] + "..." if len(request.query) > 30 else request.query
+            conversation_id = memory_manager.create_conversation(title=title)
+
+    # Save user message to episodic memory
+    try:
+        memory_manager.add_message(conversation_id=conversation_id, role="user", content=request.query)
+    except Exception as e:
+        logger.error(f"Failed to log user query in stream: {e}")
+
+    # If no results found, stream an empty set and error message
+    if not results:
+        fallback_msg = "I searched through your library, but I couldn't find any relevant passages matching your query."
+        try:
+            memory_manager.add_message(conversation_id=conversation_id, role="assistant", content=fallback_msg, sources=[])
+        except Exception as e:
+            logger.error(f"Failed to log fallback assistant response in stream: {e}")
+
+        async def empty_generator():
+            yield "data: " + json.dumps({
+                "type": "citations",
+                "citations": [],
+                "conversation_id": conversation_id
+            }) + "\n\n"
+            yield "data: " + json.dumps({
+                "type": "error",
+                "message": fallback_msg
+            }) + "\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(empty_generator(), media_type="text/event-stream")
+
+    # Format chunks for prompt and citations
+    chunks = []
+    enriched_items = []
+    for r in results:
+        doc_id = r.get("document_id", "")
+        chunk_id = r.get("chunk_id", "")
+        filename = r["metadata"].get("filename", "Unknown Document")
+        text = r["text"]
+        
+        chunks.append({
+            "document_id": doc_id,
+            "filename": filename,
+            "text": text
+        })
+        
+        enriched_items.append({
+            "chunk_id": chunk_id,
+            "document_id": doc_id,
+            "document_name": filename,
+            "chunk": text,
+            "score": r["score"],
+            "similarity": r.get("similarity", 0.0),
+            "doc_type": r["metadata"].get("doc_type", "txt"),
+            "timestamp": r["metadata"].get("timestamp", ""),
+            "chunk_index": r["metadata"].get("chunk_index", 0),
+            "total_chunks": r["metadata"].get("total_chunks", 1)
+        })
+
+    # Generator to stream results in SSE style
+    async def sse_generator():
+        # First send search citations / items metadata and the active conversation_id
+        yield "data: " + json.dumps({
+            "type": "citations",
+            "citations": enriched_items,
+            "conversation_id": conversation_id
+        }) + "\n\n"
+        
+        # Then stream LLM tokens (limit context to top 5 chunks for faster inference & timeout prevention)
+        accumulated_tokens = []
+        async for token in llm_client.generate_answer_stream(request.query, chunks[:5]):
+            accumulated_tokens.append(token)
+            yield "data: " + json.dumps({
+                "type": "token",
+                "token": token
+            }) + "\n\n"
+        
+        # Log assistant response to database on successful stream completion
+        full_response = "".join(accumulated_tokens)
+        if full_response.strip():
+            # Prepare sources list
+            sources = []
+            for item in enriched_items[:5]:
+                sources.append({
+                    "document_id": item["document_id"],
+                    "filename": item["document_name"],
+                    "chunk_id": item["chunk_id"],
+                    "text": item["chunk"][:200],
+                    "similarity": item["similarity"]
+                })
+            try:
+                memory_manager.add_message(conversation_id=conversation_id, role="assistant", content=full_response, sources=sources)
+            except Exception as e:
+                logger.error(f"Failed to log assistant message in stream completion: {e}")
+            
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")

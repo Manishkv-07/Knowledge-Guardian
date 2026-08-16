@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useDropzone } from 'react-dropzone';
 import { api } from './services/api';
+import ChatHistorySidebar from './components/ChatHistorySidebar';
+import Chat from './components/Chat';
 
 /**
  * Reusable component to highlight query keywords in text passages.
@@ -75,15 +77,178 @@ export default function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [apiStatus, setApiStatus] = useState('checking'); // 'online' | 'offline' | 'checking'
-  const [errorMessage, setErrorMessage] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [chatHistory, setChatHistory] = useState([
-    {
-      role: 'assistant',
-      content: 'Welcome to your digital study room. I am your Knowledge Guardian. Upload your research papers, notes, or textbooks, and ask questions. I will recall relevant passages and help connect the dots.',
-      citations: []
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // Chat History / Episodic Memory States
+  const [conversations, setConversations] = useState([]);
+  const [activeConversationId, setActiveConversationId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+
+  // Load conversations list
+  const loadConversations = async () => {
+    try {
+      const data = await api.getConversations();
+      setConversations(data);
+    } catch (err) {
+      console.error("Failed to load conversations", err);
     }
-  ]);
+  };
+
+  // Load message history for active conversation
+  const loadMessages = async (convId) => {
+    setIsChatLoading(true);
+    try {
+      const data = await api.getMessages(convId);
+      setMessages(data);
+    } catch (err) {
+      console.error("Failed to load messages", err);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  // Effect to load conversations list when switching to Chat tab
+  useEffect(() => {
+    if (activeTab === 'chat') {
+      loadConversations();
+    }
+  }, [activeTab]);
+
+  // Effect to load messages list when active conversation changes
+  useEffect(() => {
+    if (activeConversationId) {
+      loadMessages(activeConversationId);
+    } else {
+      setMessages([]);
+    }
+  }, [activeConversationId]);
+
+  const handleCreateConversation = async (title = "New Conversation") => {
+    try {
+      const res = await api.createConversation(title);
+      await loadConversations();
+      setActiveConversationId(res.id);
+    } catch (err) {
+      showError("Failed to create new conversation thread.");
+    }
+  };
+
+  const handleRenameConversation = async (id, newTitle) => {
+    try {
+      await api.renameConversation(id, newTitle);
+      await loadConversations();
+    } catch (err) {
+      showError("Failed to rename conversation.");
+    }
+  };
+
+  const handleDeleteConversation = async (id) => {
+    try {
+      await api.deleteConversation(id);
+      if (activeConversationId === id) {
+        setActiveConversationId(null);
+        setMessages([]);
+      }
+      await loadConversations();
+    } catch (err) {
+      showError("Failed to delete conversation.");
+    }
+  };
+
+  const handleSendMessage = async (queryText) => {
+    setIsChatLoading(true);
+    
+    // 1. Add user query immediately to the message display list for responsiveness
+    const tempUserMsg = {
+      id: `temp-user-${Date.now()}`,
+      role: 'user',
+      content: queryText,
+      created_at: new Date().toISOString(),
+    };
+    
+    // 2. Add placeholder assistant bubble with typing indicator
+    const tempAssistantId = `temp-assistant-${Date.now()}`;
+    const tempAssistantMsg = {
+      id: tempAssistantId,
+      role: 'assistant',
+      content: '',
+      sources: [],
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, tempUserMsg, tempAssistantMsg]);
+
+    let accumulatedText = "";
+    let matchingCitations = [];
+
+    // Call the streaming API
+    api.streamAnswer(
+      {
+        query: queryText,
+        conversation_id: activeConversationId
+      },
+      // onCitations callback
+      (citations, conversationId) => {
+        matchingCitations = citations || [];
+        if (!activeConversationId && conversationId) {
+          setActiveConversationId(conversationId);
+        }
+
+        // Update citations in the assistant's message bubble
+        setMessages(prev => {
+          const updated = [...prev];
+          const assistantIndex = updated.findIndex(m => m.id === tempAssistantId);
+          if (assistantIndex !== -1) {
+            updated[assistantIndex] = {
+              ...updated[assistantIndex],
+              sources: matchingCitations
+            };
+          }
+          return updated;
+        });
+      },
+      // onToken callback
+      (token) => {
+        accumulatedText += token;
+        setMessages(prev => {
+          const updated = [...prev];
+          const assistantIndex = updated.findIndex(m => m.id === tempAssistantId);
+          if (assistantIndex !== -1) {
+            updated[assistantIndex] = {
+              ...updated[assistantIndex],
+              content: accumulatedText
+            };
+          }
+          return updated;
+        });
+      },
+      // onDone callback
+      async () => {
+        setIsChatLoading(false);
+        // Reload conversations to update last message preview in the sidebar
+        await loadConversations();
+      },
+      // onError callback
+      (errorMsg) => {
+        console.error("Streaming error:", errorMsg);
+        setIsChatLoading(false);
+        setMessages(prev => {
+          const updated = [...prev];
+          const assistantIndex = updated.findIndex(m => m.id === tempAssistantId);
+          if (assistantIndex !== -1) {
+            updated[assistantIndex] = {
+              ...updated[assistantIndex],
+              content: `⚠️ Failed to connect to Ollama. Please check if your Google Colab instance is running and Ngrok tunnel is established. Error: ${errorMsg}`
+            };
+          }
+          return updated;
+        });
+      }
+    );
+  };
+
 
   // Poll for document list on mount and every 4 seconds to catch processing status changes
   useEffect(() => {
@@ -209,40 +374,7 @@ export default function App() {
     }
   };
 
-  const handleSearchSubmit = async (e) => {
-    if (e) e.preventDefault();
-    if (!searchQuery.trim()) return;
 
-    const queryText = searchQuery;
-    setSearchQuery(''); // clear input field
-
-    // Add user query to chat history
-    setChatHistory(prev => [...prev, { role: 'user', content: queryText }]);
-
-    const { items, total } = await executeSearch(
-      queryText,
-      1,
-      selectedDocTypes,
-      startDate,
-      endDate,
-      pageSize
-    );
-
-    // Formulate structured assistant response
-    let replyContent = "";
-    if (items.length === 0) {
-      replyContent = "I searched through your knowledge base, but I couldn't find any relevant passages matching your query and active filters. Make sure your documents are fully indexed or try broadening your filters.";
-    } else {
-      replyContent = `Based on your library, here are relevant passages (found ${total} total match${total > 1 ? 'es' : ''}):\n\n` + 
-        items.map((res) => `• **From ${res.document_name}**:\n  > ${res.chunk.trim()}`).join("\n\n");
-    }
-
-    setChatHistory(prev => [...prev, {
-      role: 'assistant',
-      content: replyContent,
-      citations: items.map(r => r.document_name)
-    }]);
-  };
 
   // Handle page change in pagination
   const handlePageChange = (newPage) => {
@@ -561,309 +693,25 @@ export default function App() {
           </div>
         )}
 
-        {/* 💬 Tab 2: Study Chat / Ask View with Advanced Search */}
+        {/* 💬 Tab 2: Study Chat / Ask View with Chat History & Sidebar */}
         {activeTab === 'chat' && (
           <div className="flex-1 flex overflow-hidden gap-6">
-            
-            {/* Chat & Query Thread */}
+            <ChatHistorySidebar
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              onSelectConversation={setActiveConversationId}
+              onCreateConversation={handleCreateConversation}
+              onRenameConversation={handleRenameConversation}
+              onDeleteConversation={handleDeleteConversation}
+            />
             <div className="flex-1 flex flex-col justify-between bg-white border border-accent-secondary/50 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.02)] overflow-hidden">
-              
-              {/* Chat messages */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                {chatHistory.map((chat, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-2xl px-5 py-3.5 text-sm leading-relaxed shadow-sm ${
-                        chat.role === 'user'
-                          ? 'bg-sidebar-warm text-text-primary font-medium border border-accent-secondary/50 rounded-tr-none'
-                          : 'bg-white border border-accent-secondary/60 text-text-primary rounded-tl-none'
-                      }`}
-                    >
-                      <div className="markdown-body text-text-primary space-y-1 text-sm leading-relaxed">
-                        <ReactMarkdown>{chat.content}</ReactMarkdown>
-                      </div>
-                      
-                      {chat.citations && chat.citations.length > 0 && (
-                        <div className="mt-3 pt-2.5 border-t border-bg-warm flex flex-wrap gap-1.5 items-center">
-                          <span className="text-[10px] text-text-muted uppercase font-bold tracking-wider">Citations:</span>
-                          {Array.from(new Set(chat.citations)).map((docName, i) => (
-                            <span key={i} className="text-[10px] font-medium bg-bg-warm text-accent-tertiary px-2 py-0.5 rounded border border-accent-secondary/40 max-w-[170px] truncate" title={docName}>
-                              📖 {docName}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {isSearching && (
-                  <div className="flex justify-start">
-                    <div className="bg-white border border-accent-secondary/60 rounded-2xl rounded-tl-none px-5 py-3.5 shadow-sm flex items-center gap-2 text-xs text-text-secondary">
-                      <svg className="animate-spin h-4 w-4 text-accent-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Searching knowledge base with active filters...
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Chat Input & Filter Controls */}
-              <div className="border-t border-accent-secondary/60 bg-sidebar-warm/20 p-4 space-y-3">
-                
-                {/* Search Filter Header / Quick Toggles */}
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] font-bold text-text-secondary uppercase tracking-wider flex items-center gap-1">
-                      <svg className="h-3.5 w-3.5 text-accent-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                      </svg>
-                      Doc Types:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => { setSelectedDocTypes([]); if (activeSearchQuery) executeSearch(activeSearchQuery, 1, [], startDate, endDate, pageSize); }}
-                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
-                        selectedDocTypes.length === 0
-                          ? 'bg-accent-primary text-white shadow-xs'
-                          : 'bg-white text-text-secondary border border-accent-secondary/50 hover:bg-bg-warm'
-                      }`}
-                    >
-                      All Types
-                    </button>
-                    {['pdf', 'txt', 'md'].map((type) => {
-                      const isActive = selectedDocTypes.includes(type);
-                      return (
-                        <button
-                          key={type}
-                          type="button"
-                          onClick={() => toggleDocTypeFilter(type)}
-                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase transition-all cursor-pointer ${
-                            isActive
-                              ? 'bg-accent-primary text-white shadow-xs'
-                              : 'bg-white text-text-secondary border border-accent-secondary/50 hover:bg-bg-warm'
-                          }`}
-                        >
-                          {type}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowFilterPanel(!showFilterPanel)}
-                      className="text-[11px] font-semibold text-accent-tertiary hover:text-accent-primary flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>📅 Date Filters</span>
-                      <span>{showFilterPanel ? '▲' : '▼'}</span>
-                    </button>
-
-                    {hasActiveFilters && (
-                      <button
-                        type="button"
-                        onClick={resetFilters}
-                        className="text-[10px] font-bold text-status-error hover:underline cursor-pointer ml-2"
-                      >
-                        Reset All
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Expanded Date Range Filter Drawer */}
-                {showFilterPanel && (
-                  <div className="bg-white border border-accent-secondary/50 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs shadow-xs">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider block">From Date</label>
-                      <input
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => {
-                          setStartDate(e.target.value);
-                          if (activeSearchQuery) executeSearch(activeSearchQuery, 1, selectedDocTypes, e.target.value, endDate, pageSize);
-                        }}
-                        className="w-full bg-bg-warm border border-accent-secondary/60 rounded-lg px-2.5 py-1.5 text-xs text-text-primary outline-none focus:border-accent-primary"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider block">To Date</label>
-                      <input
-                        type="date"
-                        value={endDate}
-                        onChange={(e) => {
-                          setEndDate(e.target.value);
-                          if (activeSearchQuery) executeSearch(activeSearchQuery, 1, selectedDocTypes, startDate, e.target.value, pageSize);
-                        }}
-                        className="w-full bg-bg-warm border border-accent-secondary/60 rounded-lg px-2.5 py-1.5 text-xs text-text-primary outline-none focus:border-accent-primary"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Input Form */}
-                <form onSubmit={handleSearchSubmit} className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Ask a question or search for concepts (e.g. 'Transformer attention', 'FAISS vectors')..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="flex-1 bg-white border border-accent-secondary focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl px-4 py-3 text-sm outline-none transition-all placeholder-text-muted"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isSearching || !searchQuery.trim()}
-                    className="bg-accent-primary hover:bg-accent-tertiary disabled:opacity-40 text-white font-medium text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-sm flex items-center gap-1 shrink-0 cursor-pointer"
-                  >
-                    Search
-                  </button>
-                </form>
-              </div>
+              <Chat
+                activeConversationId={activeConversationId}
+                messages={messages}
+                onSendMessage={handleSendMessage}
+                isLoading={isChatLoading}
+              />
             </div>
-
-            {/* Context & Advanced Search Results Sidebar */}
-            <div className="w-96 bg-white border border-accent-secondary/50 rounded-2xl p-5 shadow-[0_4px_12px_rgba(0,0,0,0.02)] flex flex-col shrink-0 overflow-hidden">
-              
-              {/* Header with Result Count */}
-              <div className="flex items-center justify-between border-b border-bg-warm pb-3">
-                <div>
-                  <h3 className="font-serif text-sm font-bold text-text-primary">Retrieved Passages</h3>
-                  <p className="text-[10px] text-text-secondary">
-                    {totalResults > 0 ? `${totalResults} match${totalResults > 1 ? 'es' : ''} found` : 'Semantic vector matches'}
-                  </p>
-                </div>
-                {activeSearchQuery && (
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-accent-secondary/50 text-accent-tertiary font-mono truncate max-w-[120px]" title={activeSearchQuery}>
-                    "{activeSearchQuery}"
-                  </span>
-                )}
-              </div>
-
-              {/* Result List with Highlighting and Related Chunks */}
-              <div className="flex-1 overflow-y-auto mt-4 space-y-4 pr-1">
-                {searchResults.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-4 space-y-2">
-                    <svg className="h-8 w-8 text-text-muted opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                    <p className="text-xs text-text-muted">Enter a query to retrieve highlighted passages with citations & related sections.</p>
-                  </div>
-                ) : (
-                  searchResults.map((res, i) => {
-                    const chunkId = res.chunk_id || `res_${i}`;
-                    const isExpanded = !!expandedRelated[chunkId];
-                    const docType = res.doc_type || res.document_name.split('.').pop()?.toLowerCase() || 'txt';
-                    const hasRelated = res.related_chunks && res.related_chunks.length > 0;
-
-                    return (
-                      <div key={chunkId} className="bg-bg-warm/50 border border-accent-secondary/40 rounded-xl p-3.5 space-y-2.5 text-xs shadow-2xs">
-                        
-                        {/* Result Header */}
-                        <div className="flex items-center justify-between text-[10px] text-text-secondary gap-1">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <span className="px-1.5 py-0.5 rounded bg-accent-secondary/60 text-accent-tertiary font-mono uppercase font-bold text-[9px]">
-                              {docType}
-                            </span>
-                            <span className="font-semibold text-text-primary truncate" title={res.document_name}>
-                              {res.document_name}
-                            </span>
-                          </div>
-                          <span className="bg-white px-2 py-0.5 rounded border border-accent-secondary/40 font-mono text-[10px] shrink-0 text-text-secondary">
-                            Score: {(res.similarity ? res.similarity * 100 : (1.0 / (1.0 + res.score)) * 100).toFixed(1)}%
-                          </span>
-                        </div>
-
-                        {/* Highlighted Chunk Text */}
-                        <div className="text-text-primary leading-relaxed font-serif text-[11px] bg-white p-3 rounded-lg border border-accent-secondary/30">
-                          <HighlightText text={res.chunk.trim()} query={activeSearchQuery} />
-                        </div>
-
-                        {/* Task 4: Related Chunks from Same Document */}
-                        {hasRelated && (
-                          <div className="pt-1">
-                            <button
-                              type="button"
-                              onClick={() => toggleRelated(chunkId)}
-                              className="w-full flex items-center justify-between text-[10px] font-semibold text-accent-tertiary hover:text-accent-primary py-1 px-1.5 rounded hover:bg-white/80 transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-1">
-                                <span>🔗</span>
-                                <span>Related from this document ({res.related_chunks.length})</span>
-                              </span>
-                              <span>{isExpanded ? '▲ Hide' : '▼ View'}</span>
-                            </button>
-
-                            {isExpanded && (
-                              <div className="mt-2 space-y-2 pl-2 border-l-2 border-accent-primary/40">
-                                {res.related_chunks.map((rel, rIdx) => (
-                                  <div key={rIdx} className="bg-white/90 p-2.5 rounded border border-accent-secondary/30 text-[10px] space-y-1">
-                                    <div className="flex items-center justify-between text-text-muted font-mono text-[9px]">
-                                      <span>Section #{rel.chunk_index + 1}</span>
-                                      <span className="text-accent-tertiary">Context match</span>
-                                    </div>
-                                    <p className="text-text-primary font-serif italic line-clamp-3 leading-relaxed">
-                                      <HighlightText text={rel.text.trim()} query={activeSearchQuery} />
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              {/* Task 3: Pagination Controls Bar */}
-              {totalResults > 0 && totalPages > 1 && (
-                <div className="mt-3 pt-3 border-t border-bg-warm flex items-center justify-between text-xs shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handlePageChange(currentPage - 1)}
-                    disabled={currentPage === 1 || isSearching}
-                    className="px-2.5 py-1 rounded bg-bg-warm hover:bg-accent-secondary/40 disabled:opacity-30 border border-accent-secondary/50 text-[11px] font-semibold transition-all cursor-pointer"
-                  >
-                    ‹ Prev
-                  </button>
-
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => handlePageChange(p)}
-                        className={`h-6 w-6 rounded text-[11px] font-bold transition-all cursor-pointer ${
-                          currentPage === p
-                            ? 'bg-accent-primary text-white shadow-xs'
-                            : 'bg-bg-warm text-text-secondary hover:bg-accent-secondary/30'
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handlePageChange(currentPage + 1)}
-                    disabled={currentPage >= totalPages || isSearching}
-                    className="px-2.5 py-1 rounded bg-bg-warm hover:bg-accent-secondary/40 disabled:opacity-30 border border-accent-secondary/50 text-[11px] font-semibold transition-all cursor-pointer"
-                  >
-                    Next ›
-                  </button>
-                </div>
-              )}
-
-            </div>
-
           </div>
         )}
 

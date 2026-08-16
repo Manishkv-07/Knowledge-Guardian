@@ -78,4 +78,101 @@ export const api = {
     });
     return response.data;
   },
+
+  /**
+   * Stream natural language query answer with citations
+   * @param {object} options - Query filters and details
+   * @param {function} onCitations - callback when citations metadata is received
+   * @param {function} onToken - callback when text token is received
+   * @param {function} onDone - callback when generation is completed
+   * @param {function} onError - callback on failure
+   */
+  async streamAnswer(options, onCitations, onToken, onDone, onError) {
+    try {
+      const payload = {
+        query: options.query || '',
+        doc_types: options.doc_types && options.doc_types.length > 0 ? options.doc_types : null,
+        start_date: options.start_date || null,
+        end_date: options.end_date || null,
+        page: options.page || 1,
+        page_size: options.page_size || 5,
+        top_k: options.top_k || 20,
+        conversation_id: options.conversation_id || null,
+      };
+
+      const response = await fetch('/api/documents/query-stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+
+        // Save last incomplete line back to buffer
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          if (trimmed.startsWith('data:')) {
+            const dataStr = trimmed.slice(5).trim();
+            if (dataStr === '[DONE]') {
+              if (onDone) onDone();
+              return;
+            }
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.type === 'citations' && onCitations) {
+                onCitations(parsed.citations, parsed.conversation_id);
+              } else if (parsed.type === 'token' && onToken) {
+                onToken(parsed.token);
+              } else if (parsed.type === 'error' && onError) {
+                onError(parsed.message);
+              }
+            } catch (err) {
+              console.error('Error parsing streaming line:', err);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (onError) onError(err.message || 'Stream connection error');
+    }
+  },
 };
+
+// Aliasing client to API to match requested signatures
+const API = client;
+
+export const getConversations = () => API.get('/chat/conversations').then(res => res.data);
+export const createConversation = (title) => API.post('/chat/conversations', { title }).then(res => res.data);
+export const getMessages = (conversationId) => API.get(`/chat/conversations/${conversationId}`).then(res => res.data);
+export const renameConversation = (id, title) => API.put(`/chat/conversations/${id}?title=${title}`).then(res => res.data);
+export const deleteConversation = (id) => API.delete(`/chat/conversations/${id}`).then(res => res.data);
+export const sendMessage = (conversationId, query) => API.post('/query', { query, conversation_id: conversationId }).then(res => res.data);
+
+// Also add to the main api export object for compatibility
+api.getConversations = getConversations;
+api.createConversation = createConversation;
+api.getMessages = getMessages;
+api.renameConversation = renameConversation;
+api.deleteConversation = deleteConversation;
+api.sendMessage = sendMessage;
+
