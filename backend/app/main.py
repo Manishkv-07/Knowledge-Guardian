@@ -29,6 +29,15 @@ app.include_router(search_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(queries_router, prefix="/api")
 
+@app.on_event("startup")
+async def seed_data_on_startup():
+    """Seed sample data on server start to populate the frontend panels for demo purposes"""
+    from app.services.memory_manager import memory_manager
+    try:
+        memory_manager.seed_demo_data_if_empty()
+    except Exception as e:
+        print(f"Failed to seed demo data on startup: {e}")
+
 @app.get("/")
 def read_root():
     """Root endpoint returning basic health status."""

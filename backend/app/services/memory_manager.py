@@ -160,4 +160,135 @@ class MemoryManager:
             conn.commit()
         logger.info(f"Renamed conversation {conversation_id} to '{new_title}'")
 
+    def seed_demo_data_if_empty(self):
+        """Seed high-quality research documents and proactive memories if not already seeded"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                # Check if the demo document already exists
+                cursor.execute("SELECT id FROM documents WHERE id = 101")
+                if cursor.fetchone():
+                    logger.info("Demo data already seeded. Skipping seed.")
+                    return
+            except sqlite3.OperationalError:
+                logger.warning("Documents table does not exist. Cannot seed.")
+                return
+
+            logger.info("Seeding high-quality sample research documents and proactive memories for demo...")
+            now = datetime.utcnow().isoformat()
+            
+            # 1. Insert Sample Document 1: Transformer Attention
+            cursor.execute("""
+                INSERT INTO documents (id, filename, filepath, file_size, upload_time, status, chunk_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                101, 
+                "transformer_attention_mechanisms.pdf", 
+                "data/uploads/transformer_attention_mechanisms.pdf", 
+                124530, 
+                now, 
+                "indexed", 
+                18
+            ))
+            
+            # Insert stored insights for Doc 1
+            cursor.execute("""
+                INSERT INTO memories (id, document_id, insight_type, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                201,
+                101,
+                "summary",
+                "This research paper provides a comprehensive retrospective on self-attention mechanisms in Transformer models. It outlines the transition from traditional recurrent architectures (LSTMs) to dense parallelized attention arrays, demonstrating how multi-head attention projects queries, keys, and values into separate spaces to jointly model dependencies across position alignments.",
+                now
+            ))
+            cursor.execute("""
+                INSERT INTO memories (id, document_id, insight_type, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                202,
+                101,
+                "key_concept",
+                "### Core Cognitive Concepts Extracted:\n\n- **Self-Attention Alignment**: Models direct relationships between all token pairings in a sequence, resolving bottleneck limits found in sequential recurrence.\n- **Multi-Head Projection**: Linearly projects queries, keys, and values $h$ times in parallel to capture distinct representational patterns at various token positions.\n- **Complexity Scale**: Details quadratic memory complexity $\\mathcal{O}(n^2)$ and outlines modern sparse-attention alternatives for long-document context windows.",
+                now
+            ))
+
+            # 2. Insert Sample Document 2: RAG Hallucinations
+            cursor.execute("""
+                INSERT INTO documents (id, filename, filepath, file_size, upload_time, status, chunk_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                102, 
+                "combating_hallucinations_rag.pdf", 
+                "data/uploads/combating_hallucinations_rag.pdf", 
+                95400, 
+                now, 
+                "indexed", 
+                12
+            ))
+            
+            # Insert stored insights for Doc 2
+            cursor.execute("""
+                INSERT INTO memories (id, document_id, insight_type, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                203,
+                102,
+                "summary",
+                "An analysis of Retrieval-Augmented Generation (RAG) pipelines and mitigation strategies for neural hallucinations. The study details how grounding large language models (LLMs) in structured vector contexts derived from document repositories constraints generation parameters, ensuring generated tokens remain factual and verifiable.",
+                now
+            ))
+            cursor.execute("""
+                INSERT INTO memories (id, document_id, insight_type, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                204,
+                102,
+                "key_concept",
+                "### Core Cognitive Concepts Extracted:\n\n- **Grounding Contexts**: Feeding raw text chunks directly into the model prompt to guide token distribution.\n- **Vector Store Ingestion**: Utilizing encoders to index semantic embeddings in FAISS databases for high-speed similarity search.\n- **Verification Boundaries**: Enforcing prompt constraints that reject out-of-bounds queries.",
+                now
+            ))
+            
+            # 3. Create a seed conversation thread to show the sidebar working on startup
+            # Check if conversation already exists to prevent duplicate primary key insertion
+            cursor.execute("SELECT id FROM conversations WHERE id = 'seed-thread-id'")
+            if not cursor.fetchone():
+                cursor.execute("""
+                    INSERT INTO conversations (id, title, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                """, ("seed-thread-id", "Demo Study Session: Attention Mechanisms", now, now))
+                
+                cursor.execute("""
+                    INSERT INTO messages (id, conversation_id, role, content, sources, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    "seed-msg-1", 
+                    "seed-thread-id", 
+                    "user", 
+                    "What is attention mechanism in transformers?", 
+                    None, 
+                    now
+                ))
+                
+                cursor.execute("""
+                    INSERT INTO messages (id, conversation_id, role, content, sources, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    "seed-msg-2", 
+                    "seed-thread-id", 
+                    "assistant", 
+                    "In Transformer architectures, the Attention mechanism (specifically Multi-Head Attention) projects the queries, keys, and values $h$ times with different, learned linear projections. This allows the model to jointly attend to information from different representation subspaces at different positions, improving representation learning and sequence modeling.",
+                    json.dumps([{
+                        "document_id": "101",
+                        "filename": "transformer_attention_mechanisms.pdf",
+                        "chunk_id": "chunk_attention_0",
+                        "text": "Rather than performing a single attention function, Multi-Head Attention projects the queries, keys, and values h times...",
+                        "similarity": 0.95
+                    }]),
+                    now
+                ))
+            
+            conn.commit()
+            logger.info("Demo seeding completed successfully.")
+
 memory_manager = MemoryManager()

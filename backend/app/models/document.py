@@ -74,22 +74,6 @@ class DocumentChunk(BaseModel):
     text: str
     metadata: Dict[str, Any]
 
-class DocumentResponse(BaseModel):
-    """Schema for document representation returned by the API."""
-    id: int
-    filename: str
-    upload_date: datetime  # maps to upload_time or upload_date in serialization
-    chunk_count: int
-    status: str
-
-    class Config:
-        from_attributes = True
-        # Rename output fields so upload_time maps to upload_date automatically
-        # to ensure compatibility with DocumentORM
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
-
 # Extra schemas used in endpoints
 class MemoryBase(BaseModel):
     insight_type: str
@@ -105,6 +89,23 @@ class MemoryResponse(MemoryBase):
 
     class Config:
         from_attributes = True
+
+class DocumentResponse(BaseModel):
+    """Schema for document representation returned by the API."""
+    id: int
+    filename: str
+    upload_date: datetime  # maps to upload_time or upload_date in serialization
+    chunk_count: int
+    status: str
+    memories: List[MemoryResponse] = []
+
+    class Config:
+        from_attributes = True
+        # Rename output fields so upload_time maps to upload_date automatically
+        # to ensure compatibility with DocumentORM
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 class QueryRequest(BaseModel):
     query: str
