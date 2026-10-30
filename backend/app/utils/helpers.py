@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 import logging
 
@@ -12,9 +13,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("knowledge_guardian")
 
+ALLOWED_EXTENSIONS = {'pdf', 'txt', 'md', 'html', 'htm'}
+
 def is_allowed_file(filename: str) -> bool:
-    """Check if the uploaded file is a PDF, TXT, or MD."""
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'pdf', 'txt', 'md'}
+    """Check if the uploaded file is a PDF, TXT, MD, or HTML document."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def format_file_size(size_in_bytes: int) -> str:
     """Format file size into human-readable strings."""
@@ -25,5 +28,8 @@ def format_file_size(size_in_bytes: int) -> str:
     return f"{size_in_bytes:.2f} TB"
 
 def clean_filename(filename: str) -> str:
-    """Sanitize filename to prevent directory traversal."""
-    return Path(filename).name
+    """Sanitize filename to prevent directory traversal and invalid filesystem characters."""
+    base = Path(filename).name
+    # Replace any potentially dangerous path/shell characters with underscores
+    sanitized = re.sub(r'[^a-zA-Z0-9_.-]', '_', base)
+    return sanitized if sanitized else "uploaded_document"

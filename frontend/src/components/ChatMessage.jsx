@@ -32,16 +32,18 @@ export default function ChatMessage({ message }) {
             </div>
             <div className="flex flex-wrap gap-2">
               {sources.map((src, idx) => {
+                const label = src.label || `[S${idx + 1}]`;
                 const name = src.filename || 'Unknown Source';
+                const page = src.page_number ? ` (p. ${src.page_number})` : '';
                 const score = src.similarity ? (src.similarity * 100).toFixed(1) : null;
                 return (
                   <div
                     key={idx}
-                    className="inline-flex items-center gap-1.5 text-[10px] font-medium bg-bg-warm text-accent-tertiary px-2 py-1 rounded border border-accent-secondary/40 max-w-[220px] truncate"
-                    title={`${name} ${score ? `(${score}%)` : ''}\n\nPreview: "${src.text || ''}"`}
+                    className="inline-flex items-center gap-1.5 text-[10px] font-medium bg-bg-warm text-accent-tertiary px-2 py-1 rounded border border-accent-secondary/40 max-w-[260px] truncate"
+                    title={`${label} ${name}${page} ${score ? `(${score}%)` : ''}\n\nPreview: "${src.text || ''}"`}
                   >
-                    <span>📖</span>
-                    <span className="truncate">{name}</span>
+                    <span className="font-mono font-bold text-accent-primary">{label}</span>
+                    <span className="truncate">{name}{page}</span>
                     {score && (
                       <span className="text-[8px] bg-accent-secondary/60 px-1 py-0.25 rounded text-accent-tertiary shrink-0 font-mono">
                         {score}%

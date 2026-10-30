@@ -61,69 +61,43 @@ async def query_knowledge_base_chat(request: ChatQueryRequest):
             # Keep chunks empty and continue to let LLM fallback respond
             chunks = []
 
-    # 3. Generate answer via LLM client with local mock fallback if LLM is offline/not running
+    # 3. Generate answer via Groq LLM client (with safe fallback if Groq not configured)
     answer = ""
     sources = []
     
-    # Try calling the LLM client first
-    if llm_client.base_url:
+    # Try calling the Groq LLM client first
+    if llm_client.is_groq_configured():
         try:
             llm_response = llm_client.generate_answer(query=query, chunks=chunks)
-            ans = llm_response.get("answer", "")
-            # Check if answer is a connection warning/error
-            if ans and not ans.startswith("⚠️"):
-                answer = ans
-                sources = llm_response.get("sources", [])
+            answer = llm_response.get("answer", "")
+            sources = llm_response.get("sources", [])
         except Exception as e:
-            logger.error(f"LLM generation failed: {e}")
+            logger.error(f"Groq LLM generation failed: {e}")
+            answer = f"⚠️ LLM service error: {str(e)}"
+            sources = []
             
-    # Fallback to local heuristic / mock agent response if LLM fails or is not running
+    # Fallback only when Groq is not configured or unexpected failure occurred
     if not answer.strip():
-        logger.info("Using local mock response engine fallback...")
-        query_lower = query.lower()
-        if "attention" in query_lower:
+        logger.info("Groq is not configured. Returning retrieval-only fallback response...")
+        if chunks:
+            retrieved_texts = "\n\n".join([
+                f"- [{c.get('filename', 'Source')}]: \"{c.get('text', '')[:250]}...\""
+                for c in chunks[:3]
+            ])
             answer = (
-                "In Transformer architectures, the Attention mechanism (specifically Multi-Head Attention) "
-                "projects the queries, keys, and values h times with different, learned linear projections. "
-                "This allows the model to jointly attend to information from different representation subspaces at different positions, "
-                "improving representation learning and sequence modeling."
+                "[Retrieval Fallback — LLM Not Configured]\n"
+                "I retrieved relevant passages from your library, but Groq LLM is not configured. "
+                "Add your GROQ_API_KEY to backend/.env to enable AI synthesis.\n\n"
+                f"Retrieved Passages:\n{retrieved_texts}"
             )
-            sources = [{
-                "document_id": "mock_attention",
-                "filename": "transformer_attention_mechanisms.txt",
-                "chunk_id": "chunk_attention_0",
-                "text": "Rather than performing a single attention function, Multi-Head Attention projects the queries, keys, and values h times with different linear projections...",
-                "similarity": 0.95
-            }]
-        elif "rag" in query_lower or "retrieval" in query_lower:
-            answer = (
-                "Retrieval-Augmented Generation (RAG) is a technique that combines an LLM with an external "
-                "knowledge index (like a FAISS vector store). When a user asks a question, the system retrieves relevant "
-                "document passages and inserts them into the prompt, grounding the LLM's answer and preventing hallucinations."
-            )
-            sources = [{
-                "document_id": "mock_rag",
-                "filename": "combating_hallucinations_rag.txt",
-                "chunk_id": "chunk_rag_0",
-                "text": "By coupling an LLM with a vector search database (like FAISS), we create a Retrieval-Augmented Generation (RAG) pipeline to ground responses in document chunks...",
-                "similarity": 0.92
-            }]
+            sources = chunks[:3]
         else:
-            # General fallback using retrieved chunks from vector store if available
-            if chunks:
-                retrieved_texts = "\n\n".join([f"- From {c['filename']}: \"{c['text'][:250]}...\"" for c in chunks[:2]])
-                answer = (
-                    f"I found some relevant passages in your research library matching your query, "
-                    f"but the active LLM backend is currently offline. Here are the top indexed context chunks:\n\n{retrieved_texts}"
-                )
-                sources = chunks[:3]
-            else:
-                answer = (
-                    "I searched your knowledge base but couldn't find any relevant passages. "
-                    "Also, the external LLM backend (Colab/Ollama) is currently offline. "
-                    "Please upload a document to build your index, or check that your LLM service is active."
-                )
-                sources = []
+            answer = (
+                "I searched your knowledge base but couldn't find any relevant passages. "
+                "Additionally, the Groq LLM is not configured. Please upload documents or add your "
+                "GROQ_API_KEY to backend/.env."
+            )
+            sources = []
 
     # 4. Save assistant response to database
     try:

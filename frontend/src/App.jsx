@@ -1,67 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import React, { useState, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { api } from './services/api';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import Chat from './components/Chat';
-
-/**
- * Reusable component to highlight query keywords in text passages.
- * Preserves text casing and handles multi-word query tokens cleanly.
- */
-function HighlightText({ text, query, className = "" }) {
-  if (!text) return null;
-  if (!query || !query.trim()) {
-    return <span className={className}>{text}</span>;
-  }
-
-  // Tokenize query words (length >= 2, or single alphanumeric character)
-  const terms = query
-    .toLowerCase()
-    .split(/\s+/)
-    .map(w => w.replace(/[^a-zA-Z0-9_-]/g, ''))
-    .filter(w => w.length > 0);
-
-  if (terms.length === 0) {
-    return <span className={className}>{text}</span>;
-  }
-
-  // Build regex matching any of the query terms safely
-  const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
-  const parts = text.split(regex);
-
-  return (
-    <span className={className}>
-      {parts.map((part, i) => {
-        const isMatch = terms.some(t => t.toLowerCase() === part.toLowerCase());
-        return isMatch ? (
-          <mark
-            key={i}
-            className="bg-accent-primary/30 text-text-primary px-1 py-0.5 rounded font-medium border-b border-accent-primary/60"
-          >
-            {part}
-          </mark>
-        ) : (
-          <span key={i}>{part}</span>
-        );
-      })}
-    </span>
-  );
-}
+import AdvancedSearch, { HighlightText } from './components/AdvancedSearch';
+import ConnectionsView from './components/ConnectionsView';
+import FlashcardsView from './components/FlashcardsView';
+import MemoryPatternsView from './components/MemoryPatternsView';
+import SystemMetricsView from './components/SystemMetricsView';
 
 export default function App() {
   const [documents, setDocuments] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState(null);
-  const [activeTab, setActiveTab] = useState('library'); // 'library' | 'chat' | 'insights' | 'stats'
+  const [activeTab, setActiveTab] = useState('library'); // 'library' | 'search' | 'chat' | 'connections' | 'flashcards' | 'insights' | 'stats'
   
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchQuery, setActiveSearchQuery] = useState('');
-  const [selectedDocTypes, setSelectedDocTypes] = useState([]); // ['pdf', 'txt', 'md'] or [] for all
+  const [selectedDocTypes, setSelectedDocTypes] = useState([]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [showFilterPanel, setShowFilterPanel] = useState(false);
   
   // Pagination & Results States
   const [searchResults, setSearchResults] = useState([]);
@@ -69,14 +27,12 @@ export default function App() {
   const [pageSize, setPageSize] = useState(5);
   const [totalPages, setTotalPages] = useState(1);
   const [totalResults, setTotalResults] = useState(0);
-  const [expandedRelated, setExpandedRelated] = useState({}); // { [chunk_id]: boolean }
+  const [expandedRelated, setExpandedRelated] = useState({});
 
-  const [topK, setTopK] = useState(20);
-  const [insightType, setInsightType] = useState('summary');
   const [isUploading, setIsUploading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [apiStatus, setApiStatus] = useState('checking'); // 'online' | 'offline' | 'checking'
+  const [apiStatus, setApiStatus] = useState('checking');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -90,7 +46,7 @@ export default function App() {
   const loadConversations = async () => {
     try {
       const data = await api.getConversations();
-      setConversations(data);
+      setConversations(data || []);
     } catch (err) {
       console.error("Failed to load conversations", err);
     }
@@ -101,7 +57,7 @@ export default function App() {
     setIsChatLoading(true);
     try {
       const data = await api.getMessages(convId);
-      setMessages(data);
+      setMessages(data || []);
     } catch (err) {
       console.error("Failed to load messages", err);
     } finally {
@@ -109,14 +65,12 @@ export default function App() {
     }
   };
 
-  // Effect to load conversations list when switching to Chat tab
   useEffect(() => {
     if (activeTab === 'chat') {
       loadConversations();
     }
   }, [activeTab]);
 
-  // Effect to load messages list when active conversation changes
   useEffect(() => {
     if (activeConversationId) {
       loadMessages(activeConversationId);
@@ -160,7 +114,6 @@ export default function App() {
   const handleSendMessage = async (queryText) => {
     setIsChatLoading(true);
     
-    // 1. Add user query immediately to the message display list for responsiveness
     const tempUserMsg = {
       id: `temp-user-${Date.now()}`,
       role: 'user',
@@ -168,7 +121,6 @@ export default function App() {
       created_at: new Date().toISOString(),
     };
     
-    // 2. Add placeholder assistant bubble with typing indicator
     const tempAssistantId = `temp-assistant-${Date.now()}`;
     const tempAssistantMsg = {
       id: tempAssistantId,
@@ -183,20 +135,17 @@ export default function App() {
     let accumulatedText = "";
     let matchingCitations = [];
 
-    // Call the streaming API
     api.streamAnswer(
       {
         query: queryText,
         conversation_id: activeConversationId
       },
-      // onCitations callback
       (citations, conversationId) => {
         matchingCitations = citations || [];
         if (!activeConversationId && conversationId) {
           setActiveConversationId(conversationId);
         }
 
-        // Update citations in the assistant's message bubble
         setMessages(prev => {
           const updated = [...prev];
           const assistantIndex = updated.findIndex(m => m.id === tempAssistantId);
@@ -209,7 +158,6 @@ export default function App() {
           return updated;
         });
       },
-      // onToken callback
       (token) => {
         accumulatedText += token;
         setMessages(prev => {
@@ -224,13 +172,10 @@ export default function App() {
           return updated;
         });
       },
-      // onDone callback
       async () => {
         setIsChatLoading(false);
-        // Reload conversations to update last message preview in the sidebar
         await loadConversations();
       },
-      // onError callback
       (errorMsg) => {
         console.error("Streaming error:", errorMsg);
         setIsChatLoading(false);
@@ -240,7 +185,7 @@ export default function App() {
           if (assistantIndex !== -1) {
             updated[assistantIndex] = {
               ...updated[assistantIndex],
-              content: `⚠️ Failed to connect to Ollama. Please check if your Google Colab instance is running and Ngrok tunnel is established. Error: ${errorMsg}`
+              content: `⚠️ LLM inference error: ${errorMsg}. Please verify your Groq API configuration in backend/.env.`
             };
           }
           return updated;
@@ -249,8 +194,6 @@ export default function App() {
     );
   };
 
-
-  // Poll for document list on mount and every 4 seconds to catch processing status changes
   useEffect(() => {
     checkBackendHealth();
     loadDocuments();
@@ -274,21 +217,20 @@ export default function App() {
   const loadDocuments = async () => {
     try {
       const docs = await api.getDocuments();
-      setDocuments(docs);
+      setDocuments(docs || []);
       setApiStatus('online');
     } catch (err) {
       console.error("Failed to load documents", err);
     }
   };
 
-  // Dropzone callback handling file drop (PDF, TXT, MD)
   const onDrop = React.useCallback(async (acceptedFiles) => {
     const file = acceptedFiles[0];
     if (!file) return;
     
     const ext = file.name.split('.').pop()?.toLowerCase();
-    if (!['pdf', 'txt', 'md'].includes(ext)) {
-      showError("Supported formats: PDF, TXT, and Markdown (MD) files.");
+    if (!['pdf', 'txt', 'md', 'html', 'htm'].includes(ext)) {
+      showError("Supported formats: PDF, TXT, Markdown (MD), and HTML files.");
       return;
     }
 
@@ -310,7 +252,8 @@ export default function App() {
     accept: {
       'application/pdf': ['.pdf'],
       'text/plain': ['.txt'],
-      'text/markdown': ['.md']
+      'text/markdown': ['.md'],
+      'text/html': ['.html', '.htm']
     },
     multiple: false,
     disabled: isUploading
@@ -318,7 +261,7 @@ export default function App() {
 
   const handleDelete = async (docId, e) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this document and its memory indices?")) return;
+    if (!window.confirm("Delete this document and all its indexed vectors, connections, and memories?")) return;
     try {
       await api.deleteDocument(docId);
       if (selectedDocId === docId) setSelectedDocId(null);
@@ -328,9 +271,6 @@ export default function App() {
     }
   };
 
-  /**
-   * Execute semantic search query with current filters and pagination
-   */
   const executeSearch = async (
     queryText,
     page = 1,
@@ -374,9 +314,6 @@ export default function App() {
     }
   };
 
-
-
-  // Handle page change in pagination
   const handlePageChange = (newPage) => {
     if (newPage < 1 || newPage > totalPages || newPage === currentPage) return;
     if (activeSearchQuery) {
@@ -384,7 +321,6 @@ export default function App() {
     }
   };
 
-  // Toggle document type filter pill
   const toggleDocTypeFilter = (type) => {
     let updated;
     if (selectedDocTypes.includes(type)) {
@@ -398,7 +334,6 @@ export default function App() {
     }
   };
 
-  // Reset all search filters
   const resetFilters = () => {
     setSelectedDocTypes([]);
     setStartDate('');
@@ -408,7 +343,6 @@ export default function App() {
     }
   };
 
-  // Toggle "Related Chunks" accordion for a given result
   const toggleRelated = (chunkId) => {
     setExpandedRelated(prev => ({
       ...prev,
@@ -416,7 +350,7 @@ export default function App() {
     }));
   };
 
-  const handleGenerateInsight = async () => {
+  const handleGenerateInsight = async (insightType, customInstruction = '') => {
     if (!selectedDocId) {
       showError("Please select a document from the library to analyze.");
       return;
@@ -425,10 +359,10 @@ export default function App() {
     setIsGenerating(true);
     setErrorMessage('');
     try {
-      await api.generateInsight(selectedDocId, insightType);
-      await loadDocuments(); // Reload to get updated memories list
+      await api.generateInsight(selectedDocId, insightType, customInstruction);
+      await loadDocuments();
     } catch (err) {
-      showError("Failed to generate insight. Verify your Modal LLM configurations.");
+      showError(err.response?.data?.detail || "Failed to generate insight. Verify your Groq configurations.");
     } finally {
       setIsGenerating(false);
     }
@@ -448,10 +382,9 @@ export default function App() {
   };
 
   const selectedDoc = documents.find(d => d.id === selectedDocId);
-  const totalChunksCount = documents.reduce((acc, doc) => acc + (doc.chunk_count || 15), 0);
+  const totalChunksCount = documents.reduce((acc, doc) => acc + (doc.chunk_count || 0), 0);
   const indexedDocs = documents.filter(d => d.status === 'indexed');
   const memoriesCount = documents.reduce((acc, doc) => acc + (doc.memories?.length || 0), 0);
-  const hasActiveFilters = selectedDocTypes.length > 0 || startDate !== '' || endDate !== '';
 
   return (
     <div className="min-h-screen flex bg-bg-warm text-text-primary font-sans antialiased">
@@ -462,24 +395,24 @@ export default function App() {
           
           {/* Logo Area */}
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-accent-primary flex items-center justify-center shadow-sm">
+            <div className="h-9 w-9 rounded-xl bg-accent-primary flex items-center justify-center shadow-sm">
               <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
               </svg>
             </div>
             <div>
               <h2 className="font-serif font-bold text-base leading-tight text-text-primary">Guardian</h2>
-              <p className="text-[10px] text-text-secondary tracking-widest uppercase">Knowledge Space</p>
+              <p className="text-[10px] text-text-secondary tracking-widest uppercase">Personal Intelligence</p>
             </div>
           </div>
 
-          {/* Navigation items */}
+          {/* Navigation Items */}
           <nav className="space-y-1">
             <button
               onClick={() => setActiveTab('library')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'library'
-                  ? 'bg-accent-secondary/60 text-text-primary shadow-sm font-semibold'
+                  ? 'bg-accent-secondary/60 text-text-primary shadow-xs'
                   : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
               }`}
             >
@@ -487,40 +420,72 @@ export default function App() {
               <span>Library</span>
             </button>
             <button
+              onClick={() => setActiveTab('search')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'search'
+                  ? 'bg-accent-secondary/60 text-text-primary shadow-xs'
+                  : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
+              }`}
+            >
+              <span>🔍</span>
+              <span>Advanced Search</span>
+            </button>
+            <button
               onClick={() => setActiveTab('chat')}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'chat'
-                  ? 'bg-accent-secondary/60 text-text-primary shadow-sm font-semibold'
+                  ? 'bg-accent-secondary/60 text-text-primary shadow-xs'
                   : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
               }`}
             >
               <div className="flex items-center gap-3">
                 <span>💬</span>
-                <span>Study Chat & Search</span>
+                <span>Study Chat</span>
               </div>
-              {hasActiveFilters && (
-                <span className="h-2 w-2 rounded-full bg-accent-primary" title="Filters Active"></span>
-              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('connections')}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'connections'
+                  ? 'bg-accent-secondary/60 text-text-primary shadow-xs'
+                  : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <span>🔗</span>
+                <span>Connections</span>
+              </div>
+              <span className="h-2 w-2 rounded-full bg-status-success" title="Cross-document relationships active"></span>
+            </button>
+            <button
+              onClick={() => setActiveTab('flashcards')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'flashcards'
+                  ? 'bg-accent-secondary/60 text-text-primary shadow-xs'
+                  : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
+              }`}
+            >
+              <span>🗂️</span>
+              <span>Flashcards</span>
             </button>
             <button
               onClick={() => setActiveTab('insights')}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'insights'
-                  ? 'bg-accent-secondary/60 text-text-primary shadow-sm font-semibold'
+                  ? 'bg-accent-secondary/60 text-text-primary shadow-xs'
                   : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
               }`}
             >
               <div className="flex items-center gap-3">
                 <span>🔮</span>
-                <span>Proactive Insights</span>
+                <span>Memory & Patterns</span>
               </div>
-              <span className="h-2 w-2 rounded-full bg-status-success" title="New Insights Available"></span>
             </button>
             <button
               onClick={() => setActiveTab('stats')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'stats'
-                  ? 'bg-accent-secondary/60 text-text-primary shadow-sm font-semibold'
+                  ? 'bg-accent-secondary/60 text-text-primary shadow-xs'
                   : 'text-text-secondary hover:bg-accent-secondary/30 hover:text-text-primary'
               }`}
             >
@@ -533,13 +498,14 @@ export default function App() {
         {/* System Status Footnote */}
         <div className="pt-4 border-t border-accent-secondary/40 space-y-2">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-text-secondary">System Backend</span>
+            <span className="text-text-secondary">Backend Engine</span>
             <div className="flex items-center gap-1.5">
-              <span className={`h-2 w-2 rounded-full ${apiStatus === 'online' ? 'bg-status-success' : apiStatus === 'checking' ? 'bg-accent-primary animate-pulse' : 'bg-status-error'}`}></span>
+              <span className={`h-2 w-2 rounded-full ${apiStatus === 'online' ? 'bg-status-success' : 'bg-status-error'}`}></span>
               <span className="text-[11px] font-medium capitalize text-text-secondary">{apiStatus}</span>
             </div>
           </div>
-          <p className="text-[10px] text-text-muted">Embedding: 384-d FAISS</p>
+          <p className="text-[10px] text-text-muted">Hybrid: FAISS + BM25 (RRF)</p>
+          <p className="text-[10px] text-text-muted">LLM: Groq (gpt-oss-120b)</p>
         </div>
       </aside>
 
@@ -552,148 +518,167 @@ export default function App() {
             <span className="text-xs text-text-secondary uppercase tracking-wider font-semibold">Knowledge Guardian Workspace</span>
             <h1 className="font-serif text-xl font-bold text-text-primary">
               {activeTab === 'library' && 'Document Library & Ingestion'}
-              {activeTab === 'chat' && 'Study Chat & Advanced Retrieval'}
-              {activeTab === 'insights' && 'Proactive Memory & Concepts'}
-              {activeTab === 'stats' && 'Analytics & Vector Index Metrics'}
+              {activeTab === 'search' && 'Advanced Hybrid Retrieval'}
+              {activeTab === 'chat' && 'Conversational Study Chat'}
+              {activeTab === 'connections' && 'Cross-Document Intelligence'}
+              {activeTab === 'flashcards' && 'Source-Grounded Flashcards'}
+              {activeTab === 'insights' && 'Persistent Memory & Patterns'}
+              {activeTab === 'stats' && 'System Analytics & Metrics'}
             </h1>
           </div>
 
-          <button
-            onClick={() => setShowUploadModal(true)}
-            className="bg-accent-primary hover:bg-accent-tertiary text-white font-medium text-xs px-4 py-2.5 rounded-lg transition-all duration-200 shadow-sm flex items-center gap-2 cursor-pointer"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Ingest Document (PDF, TXT, MD)
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              href={api.getExportResearchNotesUrl()}
+              download
+              className="px-3.5 py-2.5 rounded-xl bg-white border border-accent-secondary/60 hover:bg-bg-warm text-text-primary text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+              title="Download full library research synthesis in Markdown format"
+            >
+              <span>📥</span>
+              <span>Export Master Notes</span>
+            </a>
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="bg-accent-primary hover:bg-accent-tertiary text-white font-semibold text-xs px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Ingest Document (PDF, TXT, MD, HTML)
+            </button>
+          </div>
         </header>
 
         {errorMessage && (
-          <div className="mb-4 bg-status-error/10 border border-status-error/20 text-status-error text-xs px-4 py-2.5 rounded-lg flex items-center justify-between shrink-0">
+          <div className="mb-4 bg-status-error/10 border border-status-error/20 text-status-error text-xs px-4 py-2.5 rounded-xl flex items-center justify-between shrink-0">
             <span>{errorMessage}</span>
-            <button onClick={() => setErrorMessage('')} className="hover:opacity-85 text-sm cursor-pointer">×</button>
+            <button onClick={() => setErrorMessage('')} className="hover:opacity-85 text-sm cursor-pointer">&times;</button>
           </div>
         )}
 
-        {/* 📚 Tab 1: Library/Dashboard View */}
+        {/* Tab 1: Library View */}
         {activeTab === 'library' && (
           <div className="flex-1 overflow-y-auto space-y-8 pr-1">
             <div>
-              <h1 className="font-serif text-2xl font-bold text-text-primary tracking-tight">Welcome back 👋</h1>
-              <p className="text-xs text-text-secondary mt-1">Your personal research guardian is active and indexing document knowledge.</p>
+              <h1 className="font-serif text-2xl font-bold text-text-primary tracking-tight">Your Research Library</h1>
+              <p className="text-xs text-text-secondary mt-1">Uploaded papers are parsed, chunked, and indexed with hybrid FAISS and BM25.</p>
             </div>
 
-            {/* Stats Row */}
+            {/* Quick Metrics */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-white border border-accent-secondary/50 rounded-xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
+              <div className="bg-white border border-accent-secondary/50 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
                 <span className="text-[10px] text-text-muted uppercase tracking-wider block font-semibold">Total Documents</span>
                 <span className="text-xl font-bold font-serif text-text-primary mt-1 block">{documents.length}</span>
               </div>
-              <div className="bg-white border border-accent-secondary/50 rounded-xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
+              <div className="bg-white border border-accent-secondary/50 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
                 <span className="text-[10px] text-text-muted uppercase tracking-wider block font-semibold">Connected Insights</span>
                 <span className="text-xl font-bold font-serif text-text-primary mt-1 block">{memoriesCount}</span>
               </div>
-              <div className="bg-white border border-accent-secondary/50 rounded-xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
+              <div className="bg-white border border-accent-secondary/50 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
                 <span className="text-[10px] text-text-muted uppercase tracking-wider block font-semibold">Indexed Chunks</span>
                 <span className="text-xl font-bold font-serif text-text-primary mt-1 block">{indexedDocs.length > 0 ? totalChunksCount : 0}</span>
               </div>
-              <div className="bg-white border border-accent-secondary/50 rounded-xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
-                <span className="text-[10px] text-text-muted uppercase tracking-wider block font-semibold">Study Streak</span>
-                <span className="text-xl font-bold font-serif text-text-primary mt-1 block">5 Days 🔥</span>
+              <div className="bg-white border border-accent-secondary/50 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
+                <span className="text-[10px] text-text-muted uppercase tracking-wider block font-semibold">Active Memory</span>
+                <span className="text-xl font-bold font-serif text-text-primary mt-1 block">
+                  {memoriesCount > 0 ? `${memoriesCount} Units` : '0 Units'}
+                </span>
               </div>
             </div>
 
-            {/* Main Library Grid / Timeline split */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
-              {/* Document Cards */}
-              <div className="lg:col-span-2 space-y-4">
-                <h3 className="font-serif text-lg font-bold text-text-primary">Your Study Library</h3>
-                
-                {documents.length === 0 ? (
-                  <div className="h-60 rounded-xl border border-dashed border-accent-secondary bg-white flex flex-col items-center justify-center text-center p-6">
-                    <svg className="h-10 w-10 text-accent-primary mb-2 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                    </svg>
-                    <p className="text-sm font-serif font-semibold text-text-primary">Your library is currently empty</p>
-                    <p className="text-xs text-text-secondary mt-1">Upload a research PDF, TXT, or MD document above to begin semantic indexing.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {documents.map((doc) => {
-                      const ext = doc.filename.split('.').pop()?.toUpperCase() || 'DOC';
-                      const statusStyles = {
-                        uploaded: 'bg-accent-secondary/50 text-text-secondary border-accent-secondary',
-                        processing: 'bg-accent-primary/20 text-accent-tertiary border-accent-primary/40 animate-pulse',
-                        indexed: 'bg-status-success/15 text-status-success border-status-success/30',
-                        failed: 'bg-status-error/15 text-status-error border-status-error/30',
-                      };
-
-                      return (
-                        <div
-                          key={doc.id}
-                          className="bg-white border border-accent-secondary/40 rounded-xl p-4 flex flex-col justify-between hover:shadow-md hover:border-accent-primary/60 transition-all duration-200 group"
-                        >
-                          <div>
-                            <div className="flex items-start justify-between gap-2 mb-2">
-                              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-bg-warm text-accent-tertiary font-mono">{ext}</span>
-                              <button
-                                onClick={(e) => handleDelete(doc.id, e)}
-                                className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-status-error transition-all p-0.5 rounded hover:bg-bg-warm cursor-pointer"
-                                title="Remove File"
-                              >
-                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
-                            </div>
-                            <h4 className="font-serif text-sm font-bold text-text-primary line-clamp-2 leading-snug group-hover:text-accent-tertiary transition-colors" title={doc.filename}>
-                              {doc.filename}
-                            </h4>
-                          </div>
-
-                          <div className="mt-4 pt-3 border-t border-bg-warm flex items-center justify-between text-xs text-text-muted">
-                            <span>{formatSize(doc.file_size)} • {doc.chunk_count || 0} chunks</span>
-                            <span className={`px-2 py-0.5 rounded-full border text-[10px] uppercase font-bold tracking-wider ${statusStyles[doc.status] || 'bg-bg-warm text-text-secondary'}`}>
-                              {doc.status}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Timeline feed */}
-              <div className="space-y-4">
-                <h3 className="font-serif text-lg font-bold text-text-primary">Recent Activity Feed</h3>
-                <div className="bg-white border border-accent-secondary/50 rounded-xl p-5 shadow-[0_2px_8px_rgba(0,0,0,0.02)] space-y-4 text-xs">
-                  <div className="relative pl-5 border-l-2 border-accent-secondary space-y-4">
-                    
-                    <div className="relative">
-                      <span className="absolute -left-[26px] top-0 bg-accent-primary h-2 w-2 rounded-full ring-4 ring-white"></span>
-                      <p className="font-semibold text-text-primary">Ingestion pipeline active</p>
-                      <p className="text-text-muted mt-0.5">Automated parsing & FAISS embedding generation ready.</p>
-                      <span className="text-[10px] text-text-muted block mt-1">Today</span>
-                    </div>
-
-                    <div className="relative">
-                      <span className="absolute -left-[26px] top-0 bg-accent-tertiary h-2 w-2 rounded-full ring-4 ring-white"></span>
-                      <p className="font-semibold text-text-primary">Advanced search enabled</p>
-                      <p className="text-text-muted mt-0.5">Filtering by doc type, dates, highlighting & related chunks online.</p>
-                      <span className="text-[10px] text-text-muted block mt-1">Active</span>
-                    </div>
-                  </div>
+            {/* Documents Grid */}
+            <div className="space-y-4">
+              <h3 className="font-serif text-lg font-bold text-text-primary">All Documents</h3>
+              {documents.length === 0 ? (
+                <div className="h-60 rounded-2xl border border-dashed border-accent-secondary bg-white flex flex-col items-center justify-center text-center p-6">
+                  <span className="text-3xl mb-2">📚</span>
+                  <p className="text-sm font-serif font-semibold text-text-primary">Your library is currently empty</p>
+                  <p className="text-xs text-text-secondary mt-1">Upload research documents above to begin proactive indexing.</p>
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {documents.map((doc) => {
+                    const ext = doc.filename.split('.').pop()?.toUpperCase() || 'DOC';
+                    const statusStyles = {
+                      uploaded: 'bg-accent-secondary/50 text-text-secondary border-accent-secondary',
+                      processing: 'bg-accent-primary/20 text-accent-tertiary border-accent-primary/40 animate-pulse',
+                      indexed: 'bg-status-success/15 text-status-success border-status-success/30',
+                      failed: 'bg-status-error/15 text-status-error border-status-error/30',
+                    };
 
+                    return (
+                      <div
+                        key={doc.id}
+                        className="bg-white border border-accent-secondary/40 rounded-2xl p-5 flex flex-col justify-between hover:shadow-md hover:border-accent-primary/60 transition-all duration-200 group"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-bg-warm text-accent-tertiary font-mono">{ext}</span>
+                            <button
+                              onClick={(e) => handleDelete(doc.id, e)}
+                              className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-status-error transition-all p-1 rounded hover:bg-bg-warm cursor-pointer"
+                              title="Delete document and purge vectors"
+                            >
+                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
+                          <h4 className="font-serif text-sm font-bold text-text-primary line-clamp-2 leading-snug group-hover:text-accent-tertiary transition-colors" title={doc.filename}>
+                            {doc.filename}
+                          </h4>
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-bg-warm flex items-center justify-between text-xs text-text-muted">
+                          <span>{formatSize(doc.file_size)} • {doc.chunk_count || 0} chunks</span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full border text-[10px] uppercase font-bold tracking-wider ${statusStyles[doc.status] || 'bg-bg-warm text-text-secondary'}`}
+                            title={doc.error_detail || (doc.status === 'processing' ? `Current Stage: ${doc.processing_stage || 'processing'}` : '')}
+                          >
+                            {doc.status === 'processing' && doc.processing_stage
+                              ? `${doc.processing_stage}...`
+                              : doc.status === 'failed' && doc.error_detail
+                              ? 'Failed (Inspect)'
+                              : doc.status}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* 💬 Tab 2: Study Chat / Ask View with Chat History & Sidebar */}
+        {/* Tab 2: Advanced Search View */}
+        {activeTab === 'search' && (
+          <AdvancedSearch
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            activeSearchQuery={activeSearchQuery}
+            selectedDocTypes={selectedDocTypes}
+            toggleDocTypeFilter={toggleDocTypeFilter}
+            startDate={startDate}
+            setStartDate={setStartDate}
+            endDate={endDate}
+            setEndDate={setEndDate}
+            resetFilters={resetFilters}
+            searchResults={searchResults}
+            totalResults={totalResults}
+            currentPage={currentPage}
+            pageSize={pageSize}
+            setPageSize={setPageSize}
+            totalPages={totalPages}
+            handlePageChange={handlePageChange}
+            isSearching={isSearching}
+            expandedRelated={expandedRelated}
+            toggleRelated={toggleRelated}
+            onSearch={executeSearch}
+          />
+        )}
+
+        {/* Tab 3: Study Chat View */}
         {activeTab === 'chat' && (
           <div className="flex-1 flex overflow-hidden gap-6">
             <ChatHistorySidebar
@@ -715,207 +700,38 @@ export default function App() {
           </div>
         )}
 
-        {/* 🔮 Tab 3: Proactive Insights View */}
-        {activeTab === 'insights' && (
-          <div className="flex-1 overflow-y-auto space-y-6 pr-1">
-            <div>
-              <h1 className="font-serif text-2xl font-bold text-text-primary tracking-tight">Proactive Guardian Insights</h1>
-              <p className="text-xs text-text-secondary mt-1">Cross-referencing papers & notes to surface concepts and summaries.</p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
-              {/* Insight Controls & List */}
-              <div className="lg:col-span-2 space-y-6">
-                
-                {/* Generation Control Card */}
-                <div className="bg-white border border-accent-secondary/50 rounded-xl p-5 shadow-[0_2px_8px_rgba(0,0,0,0.02)] space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-text-secondary">Target Document</label>
-                      <select 
-                        value={selectedDocId || ''} 
-                        onChange={(e) => setSelectedDocId(e.target.value ? parseInt(e.target.value) : null)}
-                        className="w-full bg-bg-warm border border-accent-secondary rounded-lg px-3 py-2 text-xs outline-none text-text-primary cursor-pointer"
-                      >
-                        <option value="">-- Choose an Indexed Document --</option>
-                        {documents.filter(d => d.status === 'indexed').map(d => (
-                          <option key={d.id} value={d.id}>{d.filename}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-text-secondary">Insight Type</label>
-                      <div className="flex gap-1.5">
-                        {['summary', 'key_concept', 'custom'].map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() => setInsightType(t)}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border capitalize transition-all cursor-pointer ${
-                              insightType === t 
-                                ? 'bg-accent-primary text-white border-accent-primary' 
-                                : 'bg-bg-warm border-accent-secondary text-text-secondary hover:text-text-primary'
-                            }`}
-                          >
-                            {t.replace('_', ' ')}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={handleGenerateInsight}
-                    disabled={isGenerating || !selectedDocId}
-                    className="w-full bg-accent-primary hover:bg-accent-tertiary disabled:opacity-40 text-white font-semibold text-xs py-2.5 rounded-lg transition-all duration-200 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                  >
-                    {isGenerating ? (
-                      <>
-                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Deploying Modal Inference...
-                      </>
-                    ) : (
-                      'Extract & Store Insight'
-                    )}
-                  </button>
-                </div>
-
-                {/* Insight list */}
-                <div className="space-y-4">
-                  <h3 className="font-serif text-lg font-bold text-text-primary">Stored Memory Units</h3>
-                  
-                  {!selectedDoc ? (
-                    <div className="rounded-xl border border-accent-secondary/50 bg-white p-8 text-center text-text-muted text-xs">
-                      Please select an indexed document above to inspect its memory units.
-                    </div>
-                  ) : selectedDoc.memories.length === 0 ? (
-                    <div className="rounded-xl border border-accent-secondary/50 bg-white p-8 text-center text-text-muted text-xs">
-                      No memories generated for "{selectedDoc.filename}" yet. Tap "Extract & Store Insight" to begin.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {selectedDoc.memories.map((mem) => (
-                        <div key={mem.id} className="bg-white border border-accent-secondary/40 rounded-xl p-5 space-y-3">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${
-                              mem.insight_type === 'summary' 
-                                ? 'bg-accent-primary/10 text-accent-tertiary border-accent-primary/20' 
-                                : 'bg-status-success/10 text-status-success border-status-success/20'
-                            }`}>
-                              {mem.insight_type.replace('_', ' ')}
-                            </span>
-                            <span className="text-text-muted text-[10px] font-mono">
-                              {new Date(mem.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                          <div className="markdown-body text-text-primary text-sm font-serif leading-relaxed bg-bg-warm/30 p-4 rounded-lg border border-accent-secondary/20 space-y-2">
-                            <ReactMarkdown>{mem.content}</ReactMarkdown>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-              </div>
-
-              {/* Learning Patterns panel */}
-              <div className="space-y-6">
-                <h3 className="font-serif text-lg font-bold text-text-primary">Cognitive Cycles</h3>
-                <div className="bg-white border border-accent-secondary/50 rounded-xl p-5 shadow-[0_2px_8px_rgba(0,0,0,0.02)] space-y-4">
-                  
-                  <div className="space-y-1 pb-3 border-b border-bg-warm">
-                    <h4 className="text-xs font-bold text-text-primary flex items-center gap-1.5">
-                      <span>🌅</span> Peak Learning Hours
-                    </h4>
-                    <p className="text-[11px] text-text-secondary">9:00 AM - 11:30 AM (Highest concentration index matches)</p>
-                  </div>
-
-                  <div className="space-y-1 pb-3 border-b border-bg-warm">
-                    <h4 className="text-xs font-bold text-text-primary flex items-center gap-1.5">
-                      <span>🔄</span> Topic Cycles
-                    </h4>
-                    <p className="text-[11px] text-text-secondary">Transformers & Semantic Indexes (3x repeats this week)</p>
-                  </div>
-
-                  <div className="space-y-1">
-                    <h4 className="text-xs font-bold text-text-primary flex items-center gap-1.5">
-                      <span>💡</span> Breakthrough Conditions
-                    </h4>
-                    <p className="text-[11px] text-text-secondary">Quiet night reading sessions with high page counts</p>
-                  </div>
-
-                </div>
-              </div>
-
-            </div>
-          </div>
+        {/* Tab 4: Cross-Document Connections View */}
+        {activeTab === 'connections' && (
+          <ConnectionsView documents={documents} />
         )}
 
-        {/* 📊 Tab 4: Statistics View */}
+        {/* Tab 5: Flashcards View */}
+        {activeTab === 'flashcards' && (
+          <FlashcardsView documents={documents} />
+        )}
+
+        {/* Tab 6: Memory & Patterns View */}
+        {activeTab === 'insights' && (
+          <MemoryPatternsView
+            documents={documents}
+            selectedDocId={selectedDocId}
+            setSelectedDocId={setSelectedDocId}
+            onGenerateInsight={handleGenerateInsight}
+            isGenerating={isGenerating}
+          />
+        )}
+
+        {/* Tab 7: Statistics & Telemetry View */}
         {activeTab === 'stats' && (
-          <div className="flex-1 overflow-y-auto space-y-6 pr-1">
-            <div>
-              <h1 className="font-serif text-2xl font-bold text-text-primary tracking-tight">Your Learning Metrics</h1>
-              <p className="text-xs text-text-secondary mt-1">Analytics on your document library, chunks, and index density.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Box 1: Vector Store Status */}
-              <div className="bg-white border border-accent-secondary/50 rounded-xl p-5 space-y-4">
-                <h3 className="font-serif text-sm font-bold text-text-primary border-b border-bg-warm pb-2">Vector Index Metrics</h3>
-                <div className="space-y-3 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">FAISS Index Dimension</span>
-                    <span className="font-mono font-semibold text-text-primary">384 (all-MiniLM-L6-v2)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">Total Embedded Vectors</span>
-                    <span className="font-mono font-semibold text-text-primary">{indexedDocs.length > 0 ? totalChunksCount : 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">Vector Store Location</span>
-                    <span className="font-mono font-semibold text-text-primary">data/vector_store/</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Box 2: Memory Database Status */}
-              <div className="bg-white border border-accent-secondary/50 rounded-xl p-5 space-y-4">
-                <h3 className="font-serif text-sm font-bold text-text-primary border-b border-bg-warm pb-2">Database Metadata</h3>
-                <div className="space-y-3 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">Database Engine</span>
-                    <span className="font-mono font-semibold text-text-primary">SQLite 3</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">Stored Insight Records</span>
-                    <span className="font-mono font-semibold text-text-primary">{memoriesCount}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">SQLite Location</span>
-                    <span className="font-mono font-semibold text-text-primary">data/memory/guardian.db</span>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
+          <SystemMetricsView />
         )}
 
       </div>
 
-      {/* 📁 Upload Modal (PDF, TXT, MD) */}
+      {/* Upload Modal (PDF, TXT, MD) */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-text-primary/20 backdrop-blur-xs flex items-center justify-center z-50">
           <div className="bg-white border border-accent-secondary rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
-            
             <div className="flex items-center justify-between border-b border-bg-warm pb-3">
               <h3 className="font-serif font-bold text-base text-text-primary">Ingest Document</h3>
               <button 
@@ -938,7 +754,7 @@ export default function App() {
                 <input {...getInputProps()} />
                 {isUploading ? (
                   <>
-                    <svg className="animate-spin h-6 w-6 text-accent-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <svg className="animate-spin h-6 w-6 text-accent-primary" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
@@ -966,7 +782,6 @@ export default function App() {
                 Cancel
               </button>
             </div>
-
           </div>
         </div>
       )}

@@ -7,6 +7,11 @@ from app.api.documents import router as documents_router
 from app.api.search import router as search_router
 from app.api.chat import router as chat_router
 from app.api.queries import router as queries_router
+from app.api.connections import router as connections_router
+from app.api.flashcards import router as flashcards_router
+from app.api.memories import router as memories_router
+from app.api.stats import router as stats_router
+from app.api.exports import router as exports_router
 
 app = FastAPI(
     title="Personal Knowledge Guardian API",
@@ -28,6 +33,11 @@ app.include_router(documents_router, prefix="/api")
 app.include_router(search_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(queries_router, prefix="/api")
+app.include_router(connections_router, prefix="/api")
+app.include_router(flashcards_router, prefix="/api")
+app.include_router(memories_router, prefix="/api")
+app.include_router(stats_router, prefix="/api")
+app.include_router(exports_router, prefix="/api")
 
 @app.on_event("startup")
 async def seed_data_on_startup():

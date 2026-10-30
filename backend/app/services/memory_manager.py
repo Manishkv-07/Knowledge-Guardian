@@ -42,6 +42,18 @@ class MemoryManager:
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
             """)
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS pattern_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic TEXT,
+                frequency INTEGER DEFAULT 1,
+                observation TEXT,
+                source_documents TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
             conn.commit()
         logger.info("Initialized conversation and messages tables in SQLite database.")
 
@@ -159,6 +171,86 @@ class MemoryManager:
             )
             conn.commit()
         logger.info(f"Renamed conversation {conversation_id} to '{new_title}'")
+
+    def get_pattern_memories(self, status: str = "active") -> List[Dict]:
+        """Retrieve user-visible pattern memories about recurring topics and research workflows."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT id, topic, frequency, observation, source_documents, status, created_at, updated_at
+                FROM pattern_memories
+                WHERE status = ?
+                ORDER BY frequency DESC, updated_at DESC
+            """, (status,))
+            rows = cursor.fetchall()
+            patterns = []
+            for row in rows:
+                d = dict(row)
+                try:
+                    d["source_documents"] = json.loads(d["source_documents"]) if d.get("source_documents") else []
+                except Exception:
+                    d["source_documents"] = []
+                patterns.append(d)
+            return patterns
+
+    def dismiss_pattern_memory(self, pattern_id: int):
+        """Dismiss a pattern memory so it is no longer shown to the user."""
+        with self._get_connection() as conn:
+            conn.execute("UPDATE pattern_memories SET status = 'dismissed' WHERE id = ?", (pattern_id,))
+            conn.commit()
+        logger.info(f"Dismissed pattern memory {pattern_id}")
+
+    def record_pattern_memory(self, topic: str, observation: str, source_documents: List[str] = None):
+        """Record or update a recurring topic pattern memory."""
+        now = datetime.utcnow().isoformat()
+        docs_json = json.dumps(source_documents or [])
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, frequency FROM pattern_memories WHERE LOWER(topic) = LOWER(?)", (topic.strip(),))
+            existing = cursor.fetchone()
+            if existing:
+                new_freq = existing["frequency"] + 1
+                conn.execute("""
+                    UPDATE pattern_memories
+                    SET frequency = ?, observation = ?, source_documents = ?, updated_at = ?, status = 'active'
+                    WHERE id = ?
+                """, (new_freq, observation, docs_json, now, existing["id"]))
+            else:
+                conn.execute("""
+                    INSERT INTO pattern_memories (topic, frequency, observation, source_documents, status, created_at, updated_at)
+                    VALUES (?, 1, ?, ?, 'active', ?, ?)
+                """, (topic.strip(), observation, docs_json, now, now))
+            conn.commit()
+
+    def get_relevant_episodic_context(self, query: str, limit: int = 3) -> List[Dict]:
+        """Retrieve query-relevant past messages and interactions from episodic memory."""
+        if not query or not query.strip():
+            return []
+
+        import re
+        tokens = re.findall(r'\b[a-zA-Z0-9_-]+\b', query.lower())
+        if not tokens:
+            return []
+
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT id, conversation_id, role, content, created_at
+                FROM messages
+                WHERE role = 'user' OR role = 'assistant'
+                ORDER BY created_at DESC
+                LIMIT 50
+            """)
+            rows = cursor.fetchall()
+
+            scored_messages = []
+            for row in rows:
+                d = dict(row)
+                text = d.get("content", "").lower()
+                match_count = sum(1 for t in tokens if t in text)
+                if match_count > 0:
+                    scored_messages.append((match_count, d))
+
+            scored_messages.sort(key=lambda x: x[0], reverse=True)
+            return [m for _, m in scored_messages[:limit]]
 
     def seed_demo_data_if_empty(self):
         """Seed high-quality research documents and proactive memories if not already seeded"""
@@ -286,6 +378,105 @@ class MemoryManager:
                         "similarity": 0.95
                     }]),
                     now
+                ))
+
+            # 4. Seed sample verified cross-document connection
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS document_connections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_doc_id INTEGER,
+                    target_doc_id INTEGER,
+                    source_chunk_id TEXT,
+                    target_chunk_id TEXT,
+                    relationship_type TEXT,
+                    explanation TEXT,
+                    evidence_source TEXT,
+                    evidence_target TEXT,
+                    source_filename TEXT,
+                    target_filename TEXT,
+                    source_page_number INTEGER,
+                    target_page_number INTEGER,
+                    confidence REAL,
+                    status TEXT DEFAULT 'new',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cursor.execute("SELECT id FROM document_connections WHERE id = 1")
+            if not cursor.fetchone():
+                cursor.execute("""
+                    INSERT INTO document_connections (
+                        id, source_doc_id, target_doc_id, source_chunk_id, target_chunk_id,
+                        relationship_type, explanation, evidence_source, evidence_target,
+                        source_filename, target_filename, source_page_number, target_page_number,
+                        confidence, status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    1, 101, 102, "101_0", "102_0",
+                    "SUPPORTS",
+                    "The RAG retrieval architecture relies on dense vector projections originally established in Transformer attention mechanisms to eliminate hallucination.",
+                    "Multi-Head Attention projects queries, keys, and values into parallel linear subspaces.",
+                    "Utilizing vector encoders to index semantic embeddings in FAISS databases ensures verifiable factual constraints.",
+                    "transformer_attention_mechanisms.pdf", "combating_hallucinations_rag.pdf",
+                    1, 1, 0.88, "new", now
+                ))
+
+            # 5. Seed sample source-grounded flashcards
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS flashcards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER,
+                    chunk_id TEXT,
+                    question TEXT,
+                    answer TEXT,
+                    source_snippet TEXT,
+                    filename TEXT,
+                    page_number INTEGER,
+                    status TEXT DEFAULT 'new',
+                    interval_days INTEGER DEFAULT 1,
+                    ease_factor REAL DEFAULT 2.5,
+                    repetitions INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    next_review_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cursor.execute("SELECT id FROM flashcards WHERE id = 1")
+            if not cursor.fetchone():
+                cursor.execute("""
+                    INSERT INTO flashcards (
+                        id, document_id, chunk_id, question, answer, source_snippet,
+                        filename, page_number, status, interval_days, ease_factor, repetitions, created_at, next_review_date
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    1, 101, "101_0",
+                    "How does Multi-Head Attention differ from single-head attention?",
+                    "Multi-Head Attention projects queries, keys, and values h times with different learned linear projections, allowing the model to jointly attend to different subspaces.",
+                    "Multi-Head Attention projects queries, keys, and values h times with different linear projections.",
+                    "transformer_attention_mechanisms.pdf", 1, "new", 1, 2.5, 0, now, now
+                ))
+                cursor.execute("""
+                    INSERT INTO flashcards (
+                        id, document_id, chunk_id, question, answer, source_snippet,
+                        filename, page_number, status, interval_days, ease_factor, repetitions, created_at, next_review_date
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    2, 102, "102_0",
+                    "What is the core benefit of RAG pipelines against hallucinations?",
+                    "RAG pipelines ground generation by inserting retrieved passages from external vector indexes directly into prompts, constraining generation parameters.",
+                    "Grounding large language models in structured vector contexts derived from document repositories constraints generation parameters.",
+                    "combating_hallucinations_rag.pdf", 1, "new", 1, 2.5, 0, now, now
+                ))
+
+            # 6. Seed sample cognitive pattern memories
+            cursor.execute("SELECT id FROM pattern_memories WHERE id = 1")
+            if not cursor.fetchone():
+                cursor.execute("""
+                    INSERT INTO pattern_memories (id, topic, frequency, observation, source_documents, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+                """, (
+                    1, "Transformer Attention & RAG Grounding", 4,
+                    "Frequent research intersection: Self-attention vector representation combined with FAISS similarity search for hallucination mitigation.",
+                    json.dumps(["transformer_attention_mechanisms.pdf", "combating_hallucinations_rag.pdf"]),
+                    now, now
                 ))
             
             conn.commit()

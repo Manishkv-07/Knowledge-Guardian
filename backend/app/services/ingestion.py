@@ -3,6 +3,7 @@ import json
 import uuid
 import datetime
 from typing import List, Dict, Any
+from html.parser import HTMLParser
 import fitz  # PyMuPDF
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -11,6 +12,38 @@ from app.config import settings
 from app.utils.helpers import logger
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+class HTMLTextExtractor(HTMLParser):
+    """Clean HTML text extractor that skips script/style tags and preserves paragraphs."""
+    def __init__(self):
+        super().__init__()
+        self.text_parts = []
+        self.ignore_tag = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in ('script', 'style', 'nav', 'header', 'footer'):
+            self.ignore_tag = True
+        elif tag.lower() in ('p', 'br', 'div', 'h1', 'h2', 'h3', 'h4', 'li'):
+            self.text_parts.append('\n')
+
+    def handle_endtag(self, tag):
+        if tag.lower() in ('script', 'style', 'nav', 'header', 'footer'):
+            self.ignore_tag = False
+        elif tag.lower() in ('p', 'div', 'h1', 'h2', 'h3', 'h4'):
+            self.text_parts.append('\n')
+
+    def handle_data(self, data):
+        if not self.ignore_tag and data:
+            cleaned = data.strip()
+            if cleaned:
+                self.text_parts.append(cleaned + " ")
+
+    def get_text(self) -> str:
+        raw = "".join(self.text_parts)
+        # Normalize multiple newlines
+        import re
+        return re.sub(r'\n{3,}', '\n\n', raw).strip()
 
 class IngestionService:
     def __init__(self):
@@ -36,7 +69,7 @@ class IngestionService:
         return str(file_path)
 
     def process_pdf(self, file_path: str, filename: str, document_id: str = None) -> dict:
-        """Extract text from PDF using PyMuPDF, split into chunks, save to disk
+        """Extract text from PDF using PyMuPDF page-by-page, split into chunks with page numbers, save to disk
         Returns: {
             "document_id": str,
             "chunks": List[dict],
@@ -50,22 +83,63 @@ class IngestionService:
 
         try:
             doc = fitz.open(file_path)
-            raw_text = ""
+            pages_data = []
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 page_text = page.get_text()
-                if page_text:
-                    raw_text += page_text + "\n"
+                if page_text and page_text.strip():
+                    pages_data.append((page_num + 1, page_text))
             doc.close()
             
-            if not raw_text.strip():
+            if not pages_data:
                 raise ValueError(f"Could not extract any text from PDF: {filename} (empty or scanned image)")
                 
         except Exception as e:
             logger.error(f"Error reading PDF {filename}: {e}")
             raise ValueError(f"Failed to parse PDF document: {str(e)}")
 
-        return self._create_and_save_chunks(raw_text, filename, document_id)
+        return self._create_and_save_page_chunks(pages_data, filename, document_id)
+
+    def _create_and_save_page_chunks(self, pages_data: List[tuple], filename: str, document_id: str = None) -> dict:
+        """Helper to split page-by-page text, preserving page numbers in metadata, and write chunks to disk."""
+        if not document_id:
+            document_id = str(uuid.uuid4())
+            
+        timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+        chunks_list = []
+        global_idx = 0
+        
+        for page_num, page_text in pages_data:
+            text_chunks = self.text_splitter.split_text(page_text)
+            for chunk_text in text_chunks:
+                chunk_id = f"{document_id}_{global_idx}"
+                chunks_list.append({
+                    "id": chunk_id,
+                    "document_id": document_id,
+                    "text": chunk_text,
+                    "metadata": {
+                        "filename": filename,
+                        "page_number": page_num,
+                        "chunk_index": global_idx,
+                        "timestamp": timestamp,
+                        "char_count": len(chunk_text)
+                    }
+                })
+                global_idx += 1
+                
+        total_chunks = len(chunks_list)
+        if total_chunks == 0:
+            raise ValueError("Document yielded no text chunks after splitting.")
+            
+        for chunk in chunks_list:
+            chunk["metadata"]["total_chunks"] = total_chunks
+            
+        self._save_chunks(document_id, chunks_list)
+        return {
+            "document_id": document_id,
+            "chunks": chunks_list,
+            "total_chunks": total_chunks
+        }
 
     def process_text(self, file_path: str, filename: str, document_id: str = None) -> dict:
         """Extract text from TXT/MD files, split into chunks
@@ -88,6 +162,29 @@ class IngestionService:
             raise ValueError(f"Failed to read text file: {str(e)}")
 
         return self._create_and_save_chunks(raw_text, filename, document_id)
+
+    def process_html(self, file_path: str, filename: str, document_id: str = None) -> dict:
+        """Extract text from HTML files, stripping script/style tags, and split into chunks."""
+        logger.info(f"Processing HTML file: {filename} at {file_path}")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                html_content = f.read()
+
+            parser = HTMLTextExtractor()
+            parser.feed(html_content)
+            extracted_text = parser.get_text()
+
+            if not extracted_text.strip():
+                raise ValueError(f"HTML document yielded no extractable body text: {filename}")
+
+        except Exception as e:
+            logger.error(f"Error parsing HTML {filename}: {e}")
+            raise ValueError(f"Failed to parse HTML document: {str(e)}")
+
+        return self._create_and_save_chunks(extracted_text, filename, document_id)
 
     def _create_and_save_chunks(self, text: str, filename: str, document_id: str = None) -> dict:
         """Helper to split text, build metadata structures, and write chunks to disk."""
@@ -114,6 +211,7 @@ class IngestionService:
                 "text": chunk_text,
                 "metadata": {
                     "filename": filename,
+                    "page_number": None,
                     "chunk_index": i,
                     "total_chunks": total_chunks,
                     "timestamp": timestamp,

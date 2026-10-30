@@ -30,7 +30,13 @@ class Settings(BaseSettings):
     MODAL_ENDPOINT_URL: str = ""
     MODAL_API_KEY: str = ""
 
-    # --- LLM Configuration (Updated for Colab) ---
+    # --- Groq LLM Configuration ---
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_TEMPERATURE: float = 0.2
+    GROQ_MAX_TOKENS: int = 1200
+
+    # --- LLM Configuration (Updated for Colab / Legacy) ---
     LLM_ENDPOINT_URL: str = "http://localhost:11434/v1"
     LLM_MODEL: str = "llama3.1"
     LLM_TEMPERATURE: float = 0.3
